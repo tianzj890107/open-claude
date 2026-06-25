@@ -150,6 +150,23 @@ This opens an interactive chat session. Type your message, press Enter, and the 
 open-claude -p "explain the main function in src/app.py"
 ```
 
+### Web UI (browser front-end)
+
+A GPT/Claude-style chat UI that drives the **same** agent — streaming replies,
+live tool-call cards (Bash/Read/Write/Edit/Glob/Grep/Skill/Agent/MCP), model
+switching, and the active profile. It's a thin adapter (`oc_web_server.py` +
+`generic_claude_gpt_style_chat.html`) that imports the engine without modifying
+the `open_claude` package.
+
+```bash
+python oc_web_server.py            # serves http://127.0.0.1:8765/
+python oc_web_server.py --cwd path/to/project --profile researcher --port 9000
+```
+
+The web session runs non-interactively (auto-approves tools, like
+`--dangerously-skip-permissions`), since there is no terminal to answer
+permission prompts; deny rules in settings/profiles are still honored.
+
 ### CLI Options
 
 ```
