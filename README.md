@@ -212,8 +212,8 @@ switching, and the active profile. It's a thin adapter (`oc_web_server.py` +
 the `open_claude` package.
 
 ```bash
-python oc_web_server.py            # serves http://127.0.0.1:8765/
-python oc_web_server.py --cwd path/to/project --profile researcher --port 9000
+python oc_web_server.py            # serves http://127.0.0.1:47291/
+python oc_web_server.py --cwd path/to/project --profile researcher --port 47291
 ```
 
 The web session runs non-interactively (auto-approves tools, like

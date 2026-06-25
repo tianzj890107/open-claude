@@ -580,8 +580,19 @@ def get_base_tool_schemas() -> list[dict[str, Any]]:
     return [BASH_SCHEMA, READ_SCHEMA, WRITE_SCHEMA, EDIT_SCHEMA, GLOB_SCHEMA, GREP_SCHEMA]
 
 
+# Tools that can modify the local filesystem or run arbitrary shell commands.
+# When OC_READONLY_FS is set (e.g. by the web bridge), they are refused at the
+# execution layer — this also covers sub-agents, which dispatch through here.
+_READONLY_BLOCKED_TOOLS = {"Write", "Edit", "Bash"}
+
+
 def execute_tool(name: str, params: dict[str, Any], cwd: str) -> str:
     """Execute a tool by name with given params."""
+    if os.environ.get("OC_READONLY_FS") and name in _READONLY_BLOCKED_TOOLS:
+        return (
+            f"Error: '{name}' is disabled in this read-only session. "
+            "The filesystem cannot be modified and shell commands cannot be run here."
+        )
     executor = TOOL_EXECUTORS.get(name)
     if not executor:
         return f"Unknown tool: {name}"

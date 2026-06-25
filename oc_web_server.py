@@ -7,20 +7,25 @@ dispatch in Conversation._execute_pending_tools) and exposes it over a tiny HTTP
 SSE API that the HTML chat UI can talk to. The command-line agent keeps working
 exactly as before — this just gives the same capabilities a web surface.
 
-Capabilities wired through, identical to the CLI agent:
+Capabilities wired through, mirroring the CLI agent (with one deliberate limit):
   - streaming assistant text
-  - the full tool loop: Bash, Read, Write, Edit, Glob, Grep, Skill, Agent, MCP,
-    Task* — executed by open-claude's own code paths (hooks included)
+  - the tool loop: Read, Glob, Grep, Skill, Agent, MCP, Task* — executed by
+    open-claude's own code paths (hooks included)
   - the active agent profile (model, system prompt, memory, tool surface, ...)
   - conversation memory / auto-compaction
 
+Read-only filesystem: unlike the CLI, the web session CANNOT modify local files
+or run shell commands. Write / Edit / Bash are hidden from the model and refused
+at the execution layer (OC_READONLY_FS), which also covers sub-agents. The CLI
+keeps full read/write access; only this web surface is restricted.
+
 Run:
-    python oc_web_server.py [--cwd DIR] [--profile NAME] [--port 8765]
-then open http://127.0.0.1:8765/ in a browser.
+    python oc_web_server.py [--cwd DIR] [--profile NAME] [--port 47291]
+then open http://127.0.0.1:47291/ in a browser.
 
 Permissions: the web session runs in non-interactive "always-allow" mode (there is
-no terminal to answer a y/n prompt), equivalent to `open-claude --dangerously-skip-
-permissions`. Deny rules in settings/profile are still honored.
+no terminal to answer a y/n prompt). Tool execution is auto-approved, but the
+read-only restriction above and any deny rules in settings/profile still apply.
 """
 
 import argparse
@@ -47,6 +52,9 @@ from open_claude.skills.registry import get_registry
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 HTML_PATH = os.path.join(SCRIPT_DIR, "generic_claude_gpt_style_chat.html")
+
+# Tools hidden from the model in web mode (filesystem stays read-only).
+READONLY_DISABLED_TOOLS = ("Write", "Edit", "Bash")
 
 
 def _stringify(content) -> str:
@@ -76,6 +84,17 @@ class Bridge:
         self.conv = Conversation(cwd, permission_mode="always_allow", profile=profile)
         # Belt-and-braces: never block on an interactive prompt even if ask-rules exist.
         self.conv.permissions._prompt_user = lambda *a, **k: (True, "")
+
+        # Read-only filesystem in web mode: the browser session must NOT be able to
+        # modify local files or run shell commands. We hide the file-mutating tools
+        # from the model (disabled_tools) AND enforce it at the execution layer via
+        # OC_READONLY_FS (set in main()), which also blocks sub-agents. The CLI is
+        # unaffected — it never sets that flag.
+        for tool_name in READONLY_DISABLED_TOOLS:
+            if tool_name not in self.conv.profile.disabled_tools:
+                self.conv.profile.disabled_tools.append(tool_name)
+        self.conv._build_tool_schemas()
+
         self.lock = threading.Lock()
 
     # -- introspection -------------------------------------------------------
@@ -305,8 +324,11 @@ def main():
     parser.add_argument("--cwd", default=os.getcwd(), help="Directory the agent operates in")
     parser.add_argument("--profile", default=os.environ.get("OC_PROFILE"), help="Agent profile name")
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--port", type=int, default=47291)
     args = parser.parse_args()
+
+    # Enforce read-only filesystem for the whole web process (covers sub-agents).
+    os.environ["OC_READONLY_FS"] = "1"
 
     provider = get_model_provider(get_model())
     if not get_api_key_for(provider):
