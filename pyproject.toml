@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "open-claude"
-version = "0.1.0"
+version = "0.4.0"
 description = "Open Claude - AI coding assistant"
 requires-python = ">=3.10"
 dependencies = [

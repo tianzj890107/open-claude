@@ -1,4 +1,4 @@
-"""Open Claude - Anthropic API client with streaming support."""
+"""Open Claude - Anthropic API client with streaming support and prompt caching."""
 
 import json
 from typing import Any, Generator, Optional
@@ -21,8 +21,56 @@ def create_client() -> anthropic.Anthropic:
 
 
 def get_tool_schemas() -> list[dict[str, Any]]:
-    """Get tool schemas in Anthropic API format."""
+    """Get the default tool schemas in Anthropic API format."""
     return TOOL_SCHEMAS
+
+
+# ---------------------------------------------------------------------------
+# Prompt caching
+#
+# We place up to 3 cache breakpoints (the API allows 4):
+#   1. System prompt (stable across the session)
+#   2. Tool definitions (stable across the session)
+#   3. Last content block of the last message (moving breakpoint — caches the
+#      whole conversation prefix between agentic iterations)
+# ---------------------------------------------------------------------------
+
+_CACHE = {"type": "ephemeral"}
+
+
+def _cached_system(system_prompt: str) -> list[dict[str, Any]]:
+    return [{"type": "text", "text": system_prompt, "cache_control": _CACHE}]
+
+
+def _cached_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not tools:
+        return tools
+    tools = [dict(t) for t in tools]
+    tools[-1] = {**tools[-1], "cache_control": _CACHE}
+    return tools
+
+
+def _cached_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Shallow-copy messages, adding cache_control to the last cacheable block."""
+    if not messages:
+        return messages
+
+    result = list(messages)
+    last = dict(result[-1])
+    content = last.get("content")
+
+    if isinstance(content, str):
+        last["content"] = [{"type": "text", "text": content, "cache_control": _CACHE}]
+        result[-1] = last
+    elif isinstance(content, list) and content:
+        blocks = list(content)
+        final = blocks[-1]
+        if isinstance(final, dict) and final.get("type") in ("text", "tool_result"):
+            blocks[-1] = {**final, "cache_control": _CACHE}
+            last["content"] = blocks
+            result[-1] = last
+
+    return result
 
 
 def stream_message(
@@ -31,6 +79,9 @@ def stream_message(
     system_prompt: str,
     model: Optional[str] = None,
     max_tokens: Optional[int] = None,
+    tools: Optional[list[dict[str, Any]]] = None,
+    temperature: Optional[float] = None,
+    thinking_budget: Optional[int] = None,
 ) -> Generator[dict[str, Any], None, None]:
     """
     Stream a message from the API, yielding events as they arrive.
@@ -46,23 +97,46 @@ def stream_message(
     """
     model = model or get_model()
     max_tokens = max_tokens or get_max_tokens()
+    tools = tools if tools is not None else get_tool_schemas()
 
-    tools = get_tool_schemas()
+    # Optional sampling controls (extended thinking forces temperature=1 and
+    # requires budget_tokens < max_tokens).
+    extra_kwargs: dict[str, Any] = {}
+    if thinking_budget and thinking_budget > 0:
+        budget = min(thinking_budget, max(1024, max_tokens - 1))
+        extra_kwargs["thinking"] = {"type": "enabled", "budget_tokens": budget}
+    elif temperature is not None:
+        extra_kwargs["temperature"] = temperature
+
+    # Usage captured from message_start (input + cache) and message_delta (output)
+    usage_acc = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+    }
 
     try:
         with client.messages.stream(
             model=model,
             max_tokens=max_tokens,
-            system=system_prompt,
-            messages=messages,
-            tools=tools,
+            system=_cached_system(system_prompt),
+            messages=_cached_messages(messages),
+            tools=_cached_tools(tools),
+            **extra_kwargs,
         ) as stream:
             # Track current tool use block
             current_tool: Optional[dict[str, Any]] = None
             current_tool_json = ""
 
             for event in stream:
-                if event.type == "content_block_start":
+                if event.type == "message_start":
+                    u = event.message.usage
+                    usage_acc["input_tokens"] = getattr(u, "input_tokens", 0) or 0
+                    usage_acc["cache_read_input_tokens"] = getattr(u, "cache_read_input_tokens", 0) or 0
+                    usage_acc["cache_creation_input_tokens"] = getattr(u, "cache_creation_input_tokens", 0) or 0
+
+                elif event.type == "content_block_start":
                     block = event.content_block
                     if block.type == "text":
                         pass  # text deltas come via content_block_delta
@@ -99,12 +173,12 @@ def stream_message(
                         current_tool_json = ""
 
                 elif event.type == "message_delta":
+                    if event.usage:
+                        usage_acc["output_tokens"] = event.usage.output_tokens or 0
                     yield {
                         "type": "message_end",
                         "stop_reason": event.delta.stop_reason,
-                        "usage": {
-                            "output_tokens": event.usage.output_tokens if event.usage else 0,
-                        },
+                        "usage": dict(usage_acc),
                     }
 
     except anthropic.APIError as e:
@@ -119,23 +193,28 @@ def send_message(
     system_prompt: str,
     model: Optional[str] = None,
     max_tokens: Optional[int] = None,
+    tools: Optional[list[dict[str, Any]]] = None,
 ) -> dict[str, Any]:
     """Non-streaming message send. Returns full response."""
     model = model or get_model()
     max_tokens = max_tokens or get_max_tokens()
+    tools = tools if tools is not None else get_tool_schemas()
 
     response = client.messages.create(
         model=model,
         max_tokens=max_tokens,
-        system=system_prompt,
-        messages=messages,
-        tools=get_tool_schemas(),
+        system=_cached_system(system_prompt),
+        messages=_cached_messages(messages),
+        tools=_cached_tools(tools),
     )
+    usage = response.usage
     return {
         "content": response.content,
         "stop_reason": response.stop_reason,
         "usage": {
-            "input_tokens": response.usage.input_tokens,
-            "output_tokens": response.usage.output_tokens,
+            "input_tokens": usage.input_tokens,
+            "output_tokens": usage.output_tokens,
+            "cache_read_input_tokens": getattr(usage, "cache_read_input_tokens", 0) or 0,
+            "cache_creation_input_tokens": getattr(usage, "cache_creation_input_tokens", 0) or 0,
         },
     }

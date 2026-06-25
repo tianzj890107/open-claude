@@ -82,7 +82,8 @@ def _execute_inline_commands(text: str) -> str:
         cmd = match.group(1)
         try:
             result = subprocess.run(
-                cmd, shell=True, capture_output=True, text=True, timeout=10,
+                cmd, shell=True, capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=10,
             )
             return result.stdout.strip()
         except Exception:
@@ -102,6 +103,29 @@ class SkillRegistry:
         self._skills: dict[str, Skill] = {}
         self._conditional_skills: dict[str, Skill] = {}  # With paths, not yet activated
         self._activated_conditional: set[str] = set()
+        self._disabled: set[str] = set()  # skills turned off by the active profile
+
+    # -- enable / disable (profile-controlled) ------------------------------
+
+    def set_disabled(self, names: list[str]):
+        """Replace the disabled set (e.g. when applying a profile)."""
+        self._disabled = {n.lstrip("/") for n in names}
+
+    def disable(self, name: str):
+        self._disabled.add(name.lstrip("/"))
+
+    def enable(self, name: str):
+        self._disabled.discard(name.lstrip("/"))
+
+    def is_disabled(self, name: str) -> bool:
+        return name.lstrip("/") in self._disabled
+
+    def disabled_names(self) -> list[str]:
+        return sorted(self._disabled)
+
+    def known_names(self) -> list[str]:
+        """All registered skill names, including disabled ones."""
+        return sorted(set(self._skills) | set(self._conditional_skills))
 
     def register(self, skill: Skill):
         """Register a skill."""
@@ -111,22 +135,26 @@ class SkillRegistry:
             self._skills[skill.name] = skill
 
     def get(self, name: str) -> Optional[Skill]:
-        """Find a skill by name."""
+        """Find an *enabled* skill by name (disabled skills are hidden)."""
         # Normalize: strip leading /
         name = name.lstrip("/")
+        if name in self._disabled:
+            return None
         return self._skills.get(name)
 
     def get_all(self) -> list[Skill]:
-        """Get all active skills."""
-        return list(self._skills.values())
+        """Get all active (enabled) skills."""
+        return [s for s in self._skills.values() if s.name not in self._disabled]
 
     def get_user_invocable(self) -> list[Skill]:
-        """Get skills the user can invoke via /command."""
-        return [s for s in self._skills.values() if s.user_invocable]
+        """Get enabled skills the user can invoke via /command."""
+        return [s for s in self._skills.values()
+                if s.user_invocable and s.name not in self._disabled]
 
     def get_model_invocable(self) -> list[Skill]:
-        """Get skills the model can auto-invoke."""
-        return [s for s in self._skills.values() if s.when_to_use]
+        """Get enabled skills the model can auto-invoke."""
+        return [s for s in self._skills.values()
+                if s.when_to_use and s.name not in self._disabled]
 
     def activate_for_paths(self, file_paths: list[str]):
         """Activate conditional skills matching the given file paths."""

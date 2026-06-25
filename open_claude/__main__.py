@@ -30,6 +30,18 @@ def main():
         "--dangerously-skip-permissions", action="store_true",
         help="Auto-approve all tool executions without asking (use with caution)",
     )
+    parser.add_argument(
+        "-c", "--continue", dest="continue_last", action="store_true",
+        help="Continue the most recent session for this directory",
+    )
+    parser.add_argument(
+        "--resume", nargs="?", const="", default=None, metavar="SESSION_ID",
+        help="Resume a session by ID (omit the ID to pick interactively)",
+    )
+    parser.add_argument(
+        "--profile", type=str, default=None, metavar="NAME",
+        help="Start with a saved agent profile (see /profile in the REPL)",
+    )
 
     args = parser.parse_args()
 
@@ -38,9 +50,10 @@ def main():
         print(f"{__version__} (Open Claude)")
         return
 
-    # Set model override
+    # Set model override (resolve friendly aliases like "opus" -> "claude-opus-4-8")
     if args.model:
-        os.environ["CLAUDE_MODEL"] = args.model
+        from .config import resolve_model
+        os.environ["CLAUDE_MODEL"] = resolve_model(args.model)
 
     cwd = args.cwd or os.getcwd()
     if not os.path.isdir(cwd):
@@ -73,20 +86,60 @@ def main():
 
     if args.prompt:
         # Non-interactive: single prompt mode
-        _run_single_prompt(args.prompt, cwd, permission_mode)
-    else:
-        # Interactive REPL
-        from .repl import run_repl
-        run_repl(cwd, permission_mode=permission_mode)
+        _run_single_prompt(args.prompt, cwd, permission_mode, args.profile)
+        return
+
+    # Resolve --resume: empty string means "pick interactively"
+    resume_session_id = None
+    if args.resume is not None:
+        if args.resume:
+            resume_session_id = args.resume
+        else:
+            resume_session_id = _pick_session(cwd)
+            if resume_session_id is None:
+                print("No previous sessions for this directory.", file=sys.stderr)
+
+    # Interactive REPL
+    from .repl import run_repl
+    run_repl(
+        cwd,
+        permission_mode=permission_mode,
+        resume_session_id=resume_session_id,
+        continue_last=args.continue_last,
+        profile_name=args.profile,
+    )
 
 
-def _run_single_prompt(prompt: str, cwd: str, permission_mode: str = "default"):
+def _pick_session(cwd: str):
+    """Interactive session picker for `--resume` without an ID."""
+    from .sessions import list_sessions
+
+    sessions = list_sessions(cwd)
+    if not sessions:
+        return None
+
+    print("Recent sessions:")
+    for i, s in enumerate(sessions, start=1):
+        print(f"  {i}. [{s['modified']}] ({s['messages']} msgs) {s['preview']}")
+    try:
+        choice = input(f"Resume which session? [1-{len(sessions)}, Enter to cancel] > ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return None
+    if choice.isdigit() and 1 <= int(choice) <= len(sessions):
+        return sessions[int(choice) - 1]["id"]
+    return None
+
+
+def _run_single_prompt(prompt: str, cwd: str, permission_mode: str = "default",
+                       profile_name: str = None):
     """Run a single prompt and exit."""
     from rich.console import Console
     from .repl import Conversation
+    from .profile import load_profile
 
     console = Console()
-    conv = Conversation(cwd, permission_mode=permission_mode)
+    profile = load_profile(profile_name, cwd) if profile_name else None
+    conv = Conversation(cwd, permission_mode=permission_mode, profile=profile)
     conv.add_user_message(prompt)
 
     try:
@@ -96,6 +149,8 @@ def _run_single_prompt(prompt: str, cwd: str, permission_mode: str = "default"):
     except Exception as e:
         console.print(f"[bold red]Error: {e}[/bold red]")
         sys.exit(1)
+    finally:
+        conv.mcp.shutdown()
 
 
 if __name__ == "__main__":

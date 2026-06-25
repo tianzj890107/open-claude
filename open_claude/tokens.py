@@ -18,6 +18,8 @@ from typing import Any, Optional
 # ---------------------------------------------------------------------------
 
 MODEL_CONTEXT_WINDOWS: dict[str, int] = {
+    "claude-opus-4-8":     200_000,
+    "claude-opus-4-7":     200_000,
     "claude-opus-4-6":     200_000,
     "claude-sonnet-4-6":   200_000,
     "claude-opus-4-5":     200_000,
@@ -31,8 +33,10 @@ MODEL_CONTEXT_WINDOWS: dict[str, int] = {
 }
 
 MODEL_MAX_OUTPUT: dict[str, int] = {
+    "claude-opus-4-8":     64_000,
+    "claude-opus-4-7":     64_000,
     "claude-opus-4-6":     64_000,
-    "claude-sonnet-4-6":   32_000,
+    "claude-sonnet-4-6":   64_000,
     "claude-opus-4-5":     32_000,
     "claude-sonnet-4-5":   32_000,
     "claude-haiku-4-5":    32_000,
@@ -45,6 +49,8 @@ MODEL_MAX_OUTPUT: dict[str, int] = {
 
 # Pricing: (input_per_million, output_per_million) in USD
 MODEL_PRICING: dict[str, tuple[float, float]] = {
+    "claude-opus-4-8":     (15.0, 75.0),
+    "claude-opus-4-7":     (15.0, 75.0),
     "claude-opus-4-6":     (15.0, 75.0),
     "claude-sonnet-4-6":   (3.0, 15.0),
     "claude-opus-4-5":     (15.0, 75.0),
@@ -221,12 +227,17 @@ class CostTracker:
         m["api_calls"] += 1
 
         # Cost
-        cost = self._calculate_cost(model, input_tokens, output_tokens)
+        cost = self._calculate_cost(model, input_tokens, output_tokens,
+                                    cache_read, cache_creation)
         self.total_cost_usd += cost
         m["cost_usd"] += cost
 
-    def _calculate_cost(self, model: str, input_tokens: int, output_tokens: int) -> float:
-        """Calculate USD cost for a single API call."""
+    def _calculate_cost(self, model: str, input_tokens: int, output_tokens: int,
+                        cache_read: int = 0, cache_creation: int = 0) -> float:
+        """Calculate USD cost for a single API call.
+
+        Cache reads cost 10% of the input price; cache writes cost 125%.
+        """
         key = _match_model(model)
         if key and key in MODEL_PRICING:
             inp_price, out_price = MODEL_PRICING[key]
@@ -234,7 +245,12 @@ class CostTracker:
             # Default to sonnet pricing
             inp_price, out_price = 3.0, 15.0
 
-        return (input_tokens * inp_price + output_tokens * out_price) / 1_000_000
+        return (
+            input_tokens * inp_price
+            + output_tokens * out_price
+            + cache_read * inp_price * 0.1
+            + cache_creation * inp_price * 1.25
+        ) / 1_000_000
 
     def format_summary(self) -> str:
         """Human-readable cost summary."""
@@ -244,6 +260,8 @@ class CostTracker:
         ]
         if self.total_cache_read_tokens > 0:
             lines.append(f"Cache read:   {self.total_cache_read_tokens:,} tokens")
+        if self.total_cache_creation_tokens > 0:
+            lines.append(f"Cache write:  {self.total_cache_creation_tokens:,} tokens")
         if len(self.per_model) > 1:
             lines.append("Per model:")
             for model, data in self.per_model.items():

@@ -3,6 +3,7 @@
 import datetime
 import os
 import subprocess
+from typing import Optional
 from .claudemd import build_memory_prompt
 from .config import get_environment_info
 
@@ -15,14 +16,16 @@ def _get_git_info(cwd: str) -> str:
     try:
         branch = subprocess.run(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            capture_output=True, text=True, cwd=cwd, timeout=5,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            cwd=cwd, timeout=5,
         )
         if branch.returncode == 0:
             parts.append(f"  Git branch: {branch.stdout.strip()}")
 
         status = subprocess.run(
             ["git", "status", "--short"],
-            capture_output=True, text=True, cwd=cwd, timeout=5,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            cwd=cwd, timeout=5,
         )
         if status.returncode == 0 and status.stdout.strip():
             lines = status.stdout.strip().split("\n")
@@ -104,13 +107,71 @@ def _get_project_structure(cwd: str) -> str:
     return f"  Project type: {', '.join(unique)}"
 
 
-def build_system_prompt(cwd: str) -> str:
-    """Build the full system prompt."""
+def _build_pinned_context(cwd: str, pinned_files: list) -> str:
+    """Read pinned files and format them for the system prompt."""
+    if not pinned_files:
+        return ""
+    blocks = []
+    for raw in pinned_files:
+        path = raw if os.path.isabs(raw) else os.path.join(cwd, raw)
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                body = fh.read()
+        except OSError:
+            continue
+        # Cap each file so the prompt stays bounded
+        if len(body) > 20000:
+            body = body[:20000] + "\n... (truncated)"
+        blocks.append(f"## {raw}\n```\n{body}\n```")
+    if not blocks:
+        return ""
+    return "\n\n".join(blocks)
+
+
+def build_system_prompt(
+    cwd: str,
+    *,
+    memory_mode: str = "full",
+    prompt_mode: str = "default",
+    extra: str = "",
+    override: str = "",
+    style: str = "",
+    pinned_files: Optional[list] = None,
+) -> str:
+    """Build the full system prompt.
+
+    prompt_mode:
+      default  - the standard Open Claude prompt
+      append   - standard prompt followed by `extra`
+      override - `override` text used verbatim, plus a live Environment block so
+                 the agent still knows cwd/platform/date
+    """
     env = get_environment_info()
     today = datetime.date.today().isoformat()
+
+    pinned = _build_pinned_context(cwd, pinned_files or [])
+
+    def _with_extras(text: str) -> str:
+        if pinned:
+            text += f"\n# Pinned Context\nThese files are always relevant; consult them first.\n\n{pinned}\n"
+        if style.strip():
+            text += f"\n# Response Style\n{style.strip()}\n"
+        return text
+
+    if prompt_mode == "override" and override.strip():
+        env_block = (
+            "\n# Environment\n"
+            f"- Working directory: {env['cwd']}\n"
+            f"- Platform: {env['platform']}\n"
+            f"- OS: {env['os_version']}\n"
+            f"- Git repo: {env['is_git_repo']}\n"
+            f"- Date: {today}\n"
+        )
+        return _with_extras(override.rstrip() + "\n" + env_block)
+
     git_info = _get_git_info(cwd)
     skills_listing = _get_skills_listing()
-    memory_prompt = build_memory_prompt(cwd)
+    memory_prompt = build_memory_prompt(cwd, memory_mode)
     project_info = _get_project_structure(cwd)
 
     prompt = f"""You are Open Claude, an interactive CLI assistant for software engineering tasks.
@@ -126,7 +187,8 @@ You have access to the following tools:
 - **Grep**: Search file contents with regex
 - **Skill**: Execute a skill (slash command) for specialized tasks
 - **TaskCreate/TaskUpdate/TaskList/TaskGet**: Track multi-step work with tasks
-- **Agent**: Launch a sub-agent for complex, multi-step tasks in an isolated context
+- **Agent**: Launch a sub-agent for complex, multi-step tasks in an isolated context (pass subagent_type to pick a specialized agent)
+- Tools named **mcp__server__tool** come from connected MCP servers; use them like any other tool
 
 # Skills
 When users reference a slash command like "/commit" or "/review", use the Skill tool to invoke it.
@@ -170,4 +232,7 @@ When users reference a slash command like "/commit" or "/review", use the Skill 
     if memory_prompt:
         prompt += f"\n# User & Project Instructions\n{memory_prompt}\n"
 
-    return prompt
+    if prompt_mode == "append" and extra.strip():
+        prompt += f"\n# Additional Instructions\n{extra.strip()}\n"
+
+    return _with_extras(prompt)

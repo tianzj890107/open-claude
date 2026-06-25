@@ -41,10 +41,18 @@ Rules:
 - Be thorough but concise - aim for ~20% of the original conversation length"""
 
 
-def needs_compaction(messages: list[dict[str, Any]], model: str) -> bool:
-    """Check if the conversation needs compaction."""
+def needs_compaction(messages: list[dict[str, Any]], model: str,
+                     threshold_fraction: Optional[float] = None) -> bool:
+    """Check if the conversation needs compaction.
+
+    If `threshold_fraction` (0-1) is given, compact once usage exceeds that
+    fraction of the context window; otherwise use the default buffer.
+    """
     effective = get_effective_context_window(model)
-    threshold = effective - AUTOCOMPACT_BUFFER
+    if threshold_fraction is not None:
+        threshold = int(effective * threshold_fraction)
+    else:
+        threshold = effective - AUTOCOMPACT_BUFFER
     current = estimate_messages_tokens(messages)
     return current >= threshold
 

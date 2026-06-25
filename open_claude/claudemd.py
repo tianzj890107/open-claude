@@ -107,12 +107,28 @@ def load_memory_files(cwd: str) -> list[MemoryFile]:
     return files
 
 
-def build_memory_prompt(cwd: str) -> str:
+def build_memory_prompt(cwd: str, mode: str = "full") -> str:
     """
     Build the memory/instructions block for the system prompt.
     Returns empty string if no memory files found.
+
+    Modes (controlled by the active agent profile):
+      full     - all CLAUDE.md / rules / local files (default behaviour)
+      project  - only project + local files (ignore user/managed globals)
+      summary  - only MEMORY.md index files, plus the first lines of each file
+      off      - inject nothing
     """
+    if mode == "off":
+        return ""
+
     mem_files = load_memory_files(cwd)
+    if not mem_files:
+        return ""
+
+    if mode == "project":
+        mem_files = [mf for mf in mem_files if mf.source in ("project", "local")]
+    elif mode == "summary":
+        mem_files = [_summarize_memory_file(mf) for mf in mem_files]
     if not mem_files:
         return ""
 
@@ -140,6 +156,20 @@ def build_memory_prompt(cwd: str) -> str:
         "Adhere to these instructions.\n\n"
     )
     return header + "\n\n".join(parts)
+
+
+# Lines kept per file in "summary" memory mode
+SUMMARY_HEAD_LINES = 20
+
+
+def _summarize_memory_file(mf: "MemoryFile") -> "MemoryFile":
+    """Condense a memory file to its leading lines for 'summary' mode."""
+    lines = mf.content.split("\n")
+    if len(lines) <= SUMMARY_HEAD_LINES:
+        return mf
+    condensed = "\n".join(lines[:SUMMARY_HEAD_LINES])
+    condensed += f"\n\n... ({len(lines) - SUMMARY_HEAD_LINES} more lines omitted in summary mode)"
+    return MemoryFile(path=mf.path, content=condensed, source=mf.source)
 
 
 # ---------------------------------------------------------------------------

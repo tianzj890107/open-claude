@@ -77,6 +77,8 @@ def _run_command(args, *, shell=False, executable=None, timeout=120, cwd="."):
         executable=executable,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=timeout,
         cwd=cwd,
     )
@@ -545,8 +547,10 @@ def execute_skill(params: dict[str, Any], cwd: str) -> str:
 # ---------------------------------------------------------------------------
 
 from .tasks import TASK_TOOL_SCHEMAS, TASK_TOOL_EXECUTORS
-from .agent import AGENT_SCHEMA
 
+# Core tool schemas. The Agent tool schema is built dynamically per session
+# (it lists the available subagent types), and MCP tool schemas are appended
+# by the conversation — see repl.py.
 TOOL_SCHEMAS = [
     BASH_SCHEMA,
     READ_SCHEMA,
@@ -556,7 +560,6 @@ TOOL_SCHEMAS = [
     GREP_SCHEMA,
     SKILL_SCHEMA,
     *TASK_TOOL_SCHEMAS,
-    AGENT_SCHEMA,
 ]
 
 TOOL_EXECUTORS = {
