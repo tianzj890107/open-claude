@@ -34,7 +34,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 # --- import open-claude's engine (unmodified) ------------------------------
 from open_claude.repl import Conversation
 from open_claude.api import stream_message
-from open_claude.config import AVAILABLE_MODELS, get_api_key
+from open_claude.config import (
+    AVAILABLE_MODELS,
+    PROVIDERS,
+    get_api_key_for,
+    get_model,
+    get_model_provider,
+)
 from open_claude.profile import load_profile
 from open_claude.sessions import SessionStore
 from open_claude.skills.registry import get_registry
@@ -302,8 +308,12 @@ def main():
     parser.add_argument("--port", type=int, default=8765)
     args = parser.parse_args()
 
-    if not get_api_key():
-        print("Error: no API key. Set ANTHROPIC_API_KEY or ~/.claude/config.json", file=sys.stderr)
+    provider = get_model_provider(get_model())
+    if not get_api_key_for(provider):
+        spec = PROVIDERS.get(provider, {})
+        envs = " or ".join(spec.get("env", [])) or "the provider API key"
+        print(f"Error: no API key for {spec.get('label', provider)}. "
+              f"Set {envs} or add it to ~/.claude/config.json", file=sys.stderr)
         sys.exit(1)
 
     cwd = os.path.abspath(args.cwd)

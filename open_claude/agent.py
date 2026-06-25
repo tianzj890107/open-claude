@@ -209,40 +209,44 @@ def execute_agent(params: dict[str, Any], cwd: str, client: anthropic.Anthropic,
 
     final_text = ""
 
+    # Provider-agnostic completion (Anthropic + OpenAI-compatible providers).
+    from .api import complete
+
     for iteration in range(MAX_AGENT_ITERATIONS):
         try:
-            response = client.messages.create(
+            response = complete(
+                client,
+                messages,
+                system_prompt,
                 model=model,
-                max_tokens=AGENT_MAX_TOKENS,
-                system=system_prompt,
-                messages=messages,
                 tools=tools,
+                max_tokens=AGENT_MAX_TOKENS,
             )
         except Exception as e:
             return f"Agent error: {e}"
 
-        # Process response content blocks
+        # Process the normalized response content blocks (plain dicts)
         assistant_content: list[dict[str, Any]] = []
         tool_uses: list[dict[str, Any]] = []
         text_parts: list[str] = []
 
-        for block in response.content:
-            if block.type == "text":
-                text_parts.append(block.text)
-                assistant_content.append({"type": "text", "text": block.text})
-            elif block.type == "tool_use":
+        for block in response.get("content", []):
+            if block.get("type") == "text":
+                text_parts.append(block.get("text", ""))
+                assistant_content.append({"type": "text", "text": block.get("text", "")})
+            elif block.get("type") == "tool_use":
                 tool_use = {
                     "type": "tool_use",
-                    "id": block.id,
-                    "name": block.name,
-                    "input": block.input,
+                    "id": block.get("id", ""),
+                    "name": block.get("name", ""),
+                    "input": block.get("input", {}),
                 }
                 assistant_content.append(tool_use)
                 tool_uses.append(tool_use)
 
         messages.append({"role": "assistant", "content": assistant_content})
 
-        if response.stop_reason != "tool_use" or not tool_uses:
+        if response.get("stop_reason") != "tool_use" or not tool_uses:
             # Agent is done
             final_text = "\n".join(text_parts)
             break

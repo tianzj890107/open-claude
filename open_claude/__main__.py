@@ -75,11 +75,16 @@ def main():
         print("Run: pip install rich", file=sys.stderr)
         sys.exit(1)
 
-    # Check API key
-    from .config import get_api_key
-    if not get_api_key():
-        print("Error: No API key found.", file=sys.stderr)
-        print("Set ANTHROPIC_API_KEY environment variable or add to ~/.claude/config.json", file=sys.stderr)
+    # Check the API key for the selected model's provider.
+    from .config import get_api_key_for, get_model, get_model_provider, PROVIDERS
+    provider = get_model_provider(get_model())
+    if not get_api_key_for(provider):
+        spec = PROVIDERS.get(provider, {})
+        envs = " or ".join(spec.get("env", [])) or "the provider API key"
+        label = spec.get("label", provider)
+        print(f"Error: No API key found for {label}.", file=sys.stderr)
+        print(f"Set {envs} environment variable, or add it to ~/.claude/config.json "
+              f'(\"api_keys\": {{\"{provider}\": \"...\"}}).', file=sys.stderr)
         sys.exit(1)
 
     permission_mode = "always_allow" if args.dangerously_skip_permissions else "default"

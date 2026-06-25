@@ -30,6 +30,16 @@ MODEL_CONTEXT_WINDOWS: dict[str, int] = {
     "claude-3-opus":       200_000,
     "claude-3-sonnet":     200_000,
     "claude-3-haiku":      200_000,
+    # --- Non-Anthropic providers (best-effort; override via env if needed) ---
+    "gpt-5.5":             400_000,
+    "qwen3.7-max":         262_144,
+    "qwen3.7-plus":        262_144,
+    "qwen3.5-plus":        131_072,
+    "glm-5.2":             200_000,
+    "glm-5.1":             200_000,
+    "kimi-k2.6":           262_144,
+    "deepseek-v4-pro":     131_072,
+    "deepseek-v4-flash":   131_072,
 }
 
 MODEL_MAX_OUTPUT: dict[str, int] = {
@@ -45,6 +55,16 @@ MODEL_MAX_OUTPUT: dict[str, int] = {
     "claude-3-opus":       4_096,
     "claude-3-sonnet":     4_096,
     "claude-3-haiku":      4_096,
+    # --- Non-Anthropic providers ---
+    "gpt-5.5":             32_000,
+    "qwen3.7-max":         16_384,
+    "qwen3.7-plus":        16_384,
+    "qwen3.5-plus":        8_192,
+    "glm-5.2":             16_384,
+    "glm-5.1":             16_384,
+    "kimi-k2.6":           16_384,
+    "deepseek-v4-pro":     8_192,
+    "deepseek-v4-flash":   8_192,
 }
 
 # Pricing: (input_per_million, output_per_million) in USD
@@ -61,6 +81,16 @@ MODEL_PRICING: dict[str, tuple[float, float]] = {
     "claude-3-opus":       (15.0, 75.0),
     "claude-3-sonnet":     (3.0, 15.0),
     "claude-3-haiku":      (0.25, 1.25),
+    # --- Non-Anthropic providers (approximate; for cost display only) ---
+    "gpt-5.5":             (5.0, 15.0),
+    "qwen3.7-max":         (2.4, 9.6),
+    "qwen3.7-plus":        (0.8, 2.0),
+    "qwen3.5-plus":        (0.8, 2.0),
+    "glm-5.2":             (0.6, 2.2),
+    "glm-5.1":             (0.6, 2.2),
+    "kimi-k2.6":           (0.6, 2.5),
+    "deepseek-v4-pro":     (0.5, 1.5),
+    "deepseek-v4-flash":   (0.15, 0.5),
 }
 
 

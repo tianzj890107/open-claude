@@ -11,7 +11,14 @@ from rich.text import Text
 from .agent import build_agent_schema, execute_agent, load_agent_types
 from .api import create_client, stream_message
 from .compact import compact_conversation, needs_compaction
-from .config import AVAILABLE_MODELS, get_model, resolve_model
+from .config import (
+    AVAILABLE_MODELS,
+    PROVIDERS,
+    get_api_key_for,
+    get_model,
+    get_model_provider,
+    resolve_model,
+)
 from .hooks import HOOK_EVENTS, HookRunner
 from .mcp import MCPManager
 from .profile import (
@@ -759,16 +766,33 @@ def _handle_command(text: str, conv: Conversation) -> bool:
             conv.model = resolved
             os.environ["CLAUDE_MODEL"] = resolved
             console.print(f"[dim]Model switched to: {resolved}[/dim]")
+            provider = get_model_provider(resolved)
+            if not get_api_key_for(provider):
+                spec = PROVIDERS.get(provider, {})
+                envs = " or ".join(spec.get("env", [])) or "the provider API key"
+                console.print(
+                    f"[yellow]Warning: no API key for {spec.get('label', provider)}. "
+                    f"Set {envs} or add it to ~/.claude/config.json before sending.[/yellow]"
+                )
         else:
             table = Table(show_header=True, box=None, padding=(0, 2))
             table.add_column("", style="bold cyan")
             table.add_column("model id", style="dim")
+            table.add_column("provider", style="dim")
+            table.add_column("key", style="dim")
             table.add_column("aliases", style="dim")
             for m in AVAILABLE_MODELS:
                 marker = "*" if m["id"] == conv.model else " "
-                table.add_row(f"{marker} {m['label']}", m["id"], ", ".join(m["aliases"][:3]))
+                provider = m.get("provider", "anthropic")
+                has_key = bool(get_api_key_for(provider))
+                key_cell = "[green]ok[/green]" if has_key else "[red]missing[/red]"
+                table.add_row(
+                    f"{marker} {m['label']}", m["id"],
+                    PROVIDERS.get(provider, {}).get("label", provider),
+                    key_cell, ", ".join(m["aliases"][:3]),
+                )
             console.print(Panel(table, title=f"Models (current: {conv.model})", border_style="blue"))
-            console.print("[dim]Switch with /model <name>, e.g. /model opus[/dim]")
+            console.print("[dim]Switch with /model <name>, e.g. /model opus or /model qwen[/dim]")
         return True
 
     if lower == "/cost":

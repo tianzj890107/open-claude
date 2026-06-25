@@ -5,19 +5,37 @@ from typing import Any, Generator, Optional
 
 import anthropic
 
-from .config import get_api_key, get_max_tokens, get_model
+from . import openai_compat
+from .config import (
+    get_api_key,
+    get_max_tokens,
+    get_model,
+    get_model_provider,
+)
 from .tools import TOOL_SCHEMAS
 
 
-def create_client() -> anthropic.Anthropic:
-    """Create Anthropic API client."""
+def _anthropic_client() -> anthropic.Anthropic:
+    """Build the Anthropic client, raising a clear error if no key is set."""
     api_key = get_api_key()
     if not api_key:
         raise ValueError(
-            "No API key found. Set ANTHROPIC_API_KEY environment variable "
+            "No Anthropic API key found. Set ANTHROPIC_API_KEY environment variable "
             "or add 'api_key' to ~/.claude/config.json"
         )
     return anthropic.Anthropic(api_key=api_key)
+
+
+def create_client():
+    """Create the Anthropic client if a key exists, else None.
+
+    Returning None (instead of raising) lets a session start when the user only
+    has a non-Anthropic provider key; the Anthropic client is built on demand.
+    """
+    try:
+        return _anthropic_client()
+    except ValueError:
+        return None
 
 
 def get_tool_schemas() -> list[dict[str, Any]]:
@@ -98,6 +116,16 @@ def stream_message(
     model = model or get_model()
     max_tokens = max_tokens or get_max_tokens()
     tools = tools if tools is not None else get_tool_schemas()
+
+    # Route non-Anthropic models through the OpenAI-compatible adapter.
+    provider = get_model_provider(model)
+    if provider != "anthropic":
+        yield from openai_compat.stream(
+            provider, model, messages, system_prompt, tools, max_tokens, temperature,
+        )
+        return
+
+    client = client or _anthropic_client()
 
     # Optional sampling controls (extended thinking forces temperature=1 and
     # requires budget_tokens < max_tokens).
@@ -216,5 +244,63 @@ def send_message(
             "output_tokens": usage.output_tokens,
             "cache_read_input_tokens": getattr(usage, "cache_read_input_tokens", 0) or 0,
             "cache_creation_input_tokens": getattr(usage, "cache_creation_input_tokens", 0) or 0,
+        },
+    }
+
+
+def complete(
+    client,
+    messages: list[dict[str, Any]],
+    system_prompt: str,
+    model: Optional[str] = None,
+    tools: Optional[list[dict[str, Any]]] = None,
+    max_tokens: Optional[int] = None,
+    temperature: Optional[float] = None,
+) -> dict[str, Any]:
+    """Provider-agnostic, non-streaming completion.
+
+    Returns {"content": [normalized blocks], "stop_reason", "usage"} where each
+    block is a plain dict: {"type": "text", "text": ...} or
+    {"type": "tool_use", "id", "name", "input"}. Works for every provider.
+    """
+    model = model or get_model()
+    max_tokens = max_tokens or get_max_tokens()
+    provider = get_model_provider(model)
+
+    if provider != "anthropic":
+        return openai_compat.send(
+            provider, model, messages, system_prompt, tools, max_tokens, temperature,
+        )
+
+    client = client or _anthropic_client()
+    kwargs: dict[str, Any] = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "system": system_prompt,
+        "messages": messages,
+    }
+    if tools:
+        kwargs["tools"] = tools
+    if temperature is not None:
+        kwargs["temperature"] = temperature
+
+    response = client.messages.create(**kwargs)
+
+    content: list[dict[str, Any]] = []
+    for block in response.content:
+        if block.type == "text":
+            content.append({"type": "text", "text": block.text})
+        elif block.type == "tool_use":
+            content.append({"type": "tool_use", "id": block.id,
+                            "name": block.name, "input": block.input})
+    u = response.usage
+    return {
+        "content": content,
+        "stop_reason": response.stop_reason,
+        "usage": {
+            "input_tokens": getattr(u, "input_tokens", 0) or 0,
+            "output_tokens": getattr(u, "output_tokens", 0) or 0,
+            "cache_read_input_tokens": getattr(u, "cache_read_input_tokens", 0) or 0,
+            "cache_creation_input_tokens": getattr(u, "cache_creation_input_tokens", 0) or 0,
         },
     }

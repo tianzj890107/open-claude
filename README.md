@@ -109,27 +109,80 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 }
 ```
 
-### Models
+### Models & providers
 
-Switch models with `/model <name>` in the REPL (run `/model` with no argument to
-see the list), the `--model` flag, or the `CLAUDE_MODEL` env var. Friendly aliases
-resolve to canonical API IDs, so `opus` works as well as `claude-opus-4-8`:
+Open Claude is multi-provider. Anthropic models use the native SDK; every other
+provider (Qwen, GLM, Kimi, DeepSeek, OpenAI) speaks the OpenAI-compatible Chat
+Completions API and is handled by a single adapter. Switch models with
+`/model <name>` in the REPL (run `/model` with no argument to see the list, each
+model's provider, and whether its key is configured), the `--model` flag, or the
+`CLAUDE_MODEL` env var. Friendly aliases resolve to canonical API IDs, so `opus`
+works as well as `claude-opus-4-8`:
 
-| Alias | Model | API ID |
-|---|---|---|
-| `opus` | Opus 4.8 (default) | `claude-opus-4-8` |
-| `opus-4.7` | Opus 4.7 | `claude-opus-4-7` |
-| `sonnet` | Sonnet 4.6 | `claude-sonnet-4-6` |
-| `haiku` | Haiku 4.5 | `claude-haiku-4-5-20251001` |
+| Alias | Model | Provider | API ID |
+|---|---|---|---|
+| `opus` | Claude Opus 4.8 (default) | Anthropic | `claude-opus-4-8` |
+| `sonnet` | Claude Sonnet 4.6 | Anthropic | `claude-sonnet-4-6` |
+| `opus-4.7` | Claude Opus 4.7 | Anthropic | `claude-opus-4-7` |
+| `haiku` | Claude Haiku 4.5 | Anthropic | `claude-haiku-4-5-20251001` |
+| `gpt` | GPT-5.5 | OpenAI | `gpt-5.5` |
+| `qwen` | Qwen3.7-Max | Qwen (DashScope) | `qwen3.7-max` |
+| `qwen-plus` | Qwen3.7-Plus | Qwen (DashScope) | `qwen3.7-plus` |
+| `qwen3.5-plus` | Qwen3.5-Plus | Qwen (DashScope) | `qwen3.5-plus` |
+| `glm` | GLM-5.2 | Zhipu GLM | `glm-5.2` |
+| `glm5.1` | GLM-5.1 | Zhipu GLM | `glm-5.1` |
+| `kimi` | Kimi K2.6 | Moonshot | `kimi-k2.6` |
+| `deepseek` | DeepSeek-V4-Pro | DeepSeek | `deepseek-v4-pro` |
+| `deepseek-flash` | DeepSeek-V4-Flash | DeepSeek | `deepseek-v4-flash` |
 
 Any unrecognized value is passed through unchanged, so you can still use a dated
-snapshot ID directly.
+snapshot ID or a provider-specific model name directly.
+
+**Non-Anthropic models need the `openai` package** (an optional dependency):
+
+```bash
+pip install "open-claude[openai]"   # or: pip install openai
+```
+
+Each provider reads its key from its own env var(s), or from an `api_keys` map in
+`~/.claude/config.json`. Base URLs can be overridden with `<PROVIDER>_BASE_URL`
+(e.g. `QWEN_BASE_URL`):
+
+| Provider | API-key env var(s) | Default base URL |
+|---|---|---|
+| Anthropic | `ANTHROPIC_API_KEY` | (native SDK) |
+| OpenAI | `OPENAI_API_KEY` | `https://api.openai.com/v1` |
+| Qwen | `DASHSCOPE_API_KEY` / `QWEN_API_KEY` | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
+| Zhipu GLM | `ZHIPUAI_API_KEY` / `GLM_API_KEY` | `https://open.bigmodel.cn/api/paas/v4` |
+| Moonshot (Kimi) | `MOONSHOT_API_KEY` / `KIMI_API_KEY` | `https://api.moonshot.cn/v1` |
+| DeepSeek | `DEEPSEEK_API_KEY` | `https://api.deepseek.com/v1` |
+
+```json
+{
+  "model": "qwen",
+  "api_keys": {
+    "qwen": "sk-...",
+    "glm": "...",
+    "deepseek": "sk-..."
+  }
+}
+```
+
+> The non-Anthropic model IDs above are best-effort defaults. If a provider
+> rejects an ID, pass the exact one with `--model <id>` or set the matching
+> `id` in `AVAILABLE_MODELS`.
 
 ### Environment Variables
 
 | Variable | Description | Default |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | Your Anthropic API key | (required) |
+| `ANTHROPIC_API_KEY` | Your Anthropic API key | (required for Claude models) |
+| `OPENAI_API_KEY` | OpenAI key (GPT models) | — |
+| `DASHSCOPE_API_KEY` / `QWEN_API_KEY` | Qwen key | — |
+| `ZHIPUAI_API_KEY` / `GLM_API_KEY` | Zhipu GLM key | — |
+| `MOONSHOT_API_KEY` / `KIMI_API_KEY` | Moonshot (Kimi) key | — |
+| `DEEPSEEK_API_KEY` | DeepSeek key | — |
+| `<PROVIDER>_BASE_URL` | Override a provider's base URL | (per-provider default) |
 | `CLAUDE_MODEL` | Model to use (alias or full ID) | `claude-opus-4-8` |
 | `CLAUDE_MAX_TOKENS` | Max output tokens | `16384` |
 

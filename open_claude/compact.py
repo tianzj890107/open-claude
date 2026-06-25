@@ -148,20 +148,22 @@ def _generate_summary(
     ]
 
     try:
-        # Use a smaller/cheaper model for summarization if available
-        summary_model = model  # Could override to haiku for cost savings
+        # Provider-agnostic completion: works for Anthropic and OpenAI-compatible
+        # providers (Qwen/GLM/Kimi/DeepSeek/OpenAI) alike.
+        from .api import complete
 
-        response = client.messages.create(
-            model=summary_model,
+        result = complete(
+            client,
+            summary_messages,
+            SUMMARY_SYSTEM_PROMPT,
+            model=model,
             max_tokens=SUMMARY_MAX_TOKENS,
-            system=SUMMARY_SYSTEM_PROMPT,
-            messages=summary_messages,
         )
 
-        # Extract text from response
-        for block in response.content:
-            if hasattr(block, "text"):
-                return block.text
+        # Extract text from the normalized content blocks
+        for block in result.get("content", []):
+            if block.get("type") == "text" and block.get("text"):
+                return block["text"]
 
         return None
     except Exception:
