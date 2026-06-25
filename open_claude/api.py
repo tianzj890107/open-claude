@@ -136,6 +136,11 @@ def stream_message(
     elif temperature is not None:
         extra_kwargs["temperature"] = temperature
 
+    # Only send the tools parameter when there actually are tools — a pure-chat
+    # session (e.g. the web surface) passes an empty list and must not get tools.
+    if tools:
+        extra_kwargs["tools"] = _cached_tools(tools)
+
     # Usage captured from message_start (input + cache) and message_delta (output)
     usage_acc = {
         "input_tokens": 0,
@@ -150,7 +155,6 @@ def stream_message(
             max_tokens=max_tokens,
             system=_cached_system(system_prompt),
             messages=_cached_messages(messages),
-            tools=_cached_tools(tools),
             **extra_kwargs,
         ) as stream:
             # Track current tool use block

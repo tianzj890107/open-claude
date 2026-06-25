@@ -104,7 +104,6 @@ html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"Seg
       <button class="ibtn" aria-label="收起侧边栏" style="width:28px;height:28px;"><i class="ti ti-layout-sidebar-left-collapse" style="font-size:18px" aria-hidden="true"></i></button>
     </div>
     <button class="newchat" id="newchat"><i class="ti ti-pencil-plus" style="font-size:16px" aria-hidden="true"></i>新对话</button>
-    <button class="srow" id="capbtn"><i class="ti ti-tools" style="font-size:16px" aria-hidden="true"></i>查看 Agent 能力</button>
 
     <div class="seclabel">会话</div>
     <button class="citem on">当前会话</button>
@@ -112,7 +111,7 @@ html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"Seg
     <div class="userrow">
       <div class="uav">OC</div>
       <div style="flex:1;min-width:0;">
-        <div id="side-cwd" style="font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">本地工作区</div>
+        <div id="side-cwd" style="font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">对话助手</div>
         <div id="side-profile" style="font-size:11px;color:var(--color-text-tertiary);">profile: default</div>
       </div>
       <i class="ti ti-dots" style="font-size:16px;color:var(--color-text-tertiary)" aria-hidden="true"></i>
@@ -123,7 +122,6 @@ html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"Seg
     <div class="topbar">
       <button class="modelpill" id="modelpill">连接中… <i class="ti ti-chevron-down" style="font-size:15px;color:var(--color-text-secondary)" aria-hidden="true"></i></button>
       <div style="margin-left:auto;display:flex;gap:2px;">
-        <button class="ibtn" id="capbtn2" aria-label="能力"><i class="ti ti-tools" style="font-size:18px" aria-hidden="true"></i></button>
         <button class="ibtn" aria-label="更多"><i class="ti ti-dots" style="font-size:18px" aria-hidden="true"></i></button>
       </div>
     </div>
@@ -132,8 +130,8 @@ html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"Seg
       <div class="tinner" id="tinner">
         <div class="empty" id="empty">
           <i class="ti ti-sparkles" style="font-size:34px;color:var(--color-border-info)"></i>
-          <div style="font-size:15px;color:var(--color-text-secondary)">这是真实的 Open Claude Agent</div>
-          <div style="font-size:13px;">它能读写文件、运行命令、搜索代码、调用技能与子代理。<br/>试试：「列出当前目录的文件并总结这个项目」</div>
+          <div style="font-size:15px;color:var(--color-text-secondary)">Open Claude 对话助手</div>
+          <div style="font-size:13px;">在这里和模型自由对话，支持多家模型切换。<br/>试试：「帮我把这段话润色得更专业一些」</div>
         </div>
       </div>
     </div>
@@ -142,11 +140,10 @@ html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"Seg
       <div class="cinner">
         <div class="inputbox">
           <button class="ibtn" aria-label="添加附件" style="width:30px;height:30px;flex-shrink:0;"><i class="ti ti-plus" style="font-size:19px" aria-hidden="true"></i></button>
-          <input id="composer-input" type="text" placeholder="给 Agent 发送消息…（它可以操作 ${cwd}）" style="flex:1;border:none;background:transparent;padding:0;height:auto;font-size:14px;color:var(--color-text-primary);outline:none;" />
-          <button class="ibtn" id="capbtn3" aria-label="工具" style="width:30px;height:30px;flex-shrink:0;"><i class="ti ti-adjustments-horizontal" style="font-size:18px" aria-hidden="true"></i></button>
+          <input id="composer-input" type="text" placeholder="给对话助手发送消息…" style="flex:1;border:none;background:transparent;padding:0;height:auto;font-size:14px;color:var(--color-text-primary);outline:none;" />
           <button class="send" id="send-btn" aria-label="发送"><i class="ti ti-arrow-up" style="font-size:18px" aria-hidden="true"></i></button>
         </div>
-        <div class="disc" id="disc">Agent 可执行真实操作（已开启自动批准）。请核实重要信息。</div>
+        <div class="disc" id="disc">这是纯对话助手，不会读写本地文件或执行命令。请核实重要信息。</div>
       </div>
     </div>
   </div>
@@ -164,20 +161,16 @@ function el(tag, cls, txt){ const e=document.createElement(tag); if(cls)e.classN
 function scrollDown(){ thread.scrollTop = thread.scrollHeight; }
 function clearEmpty(){ const e=$('empty'); if(e) e.remove(); }
 
-/* ---- capabilities meta ---- */
+/* ---- meta (model + profile) ---- */
 async function loadMeta(){
   try{
     META = await (await fetch('/api/meta')).json();
     $('modelpill').firstChild.nodeValue = META.model + ' ';
     $('side-profile').textContent = 'profile: ' + META.profile;
-    $('side-cwd').textContent = META.cwd.split(/[\\/]/).pop() || META.cwd;
-    $('side-cwd').title = META.cwd;
-    const ph = input.getAttribute('placeholder').replace('${cwd}', META.cwd);
-    input.setAttribute('placeholder', ph);
   }catch(e){ $('modelpill').firstChild.nodeValue = '未连接 '; }
 }
 
-/* ---- popovers: model selector + capabilities ---- */
+/* ---- popover: model selector ---- */
 let openPop = null;
 function closePop(){ if(openPop){ openPop.remove(); openPop=null; document.removeEventListener('click', onDoc); } }
 function onDoc(e){ if(openPop && !openPop.contains(e.target)) closePop(); }
@@ -200,26 +193,6 @@ function modelMenu(){
     });
   });
 }
-function capMenu(anchor){
-  showPop(anchor, (pop)=>{
-    pop.appendChild(el('div','cap-h','工具 (Tools) — Agent 可执行的原子能力'));
-    (META?.tools||[]).forEach(t=>{
-      const b = el('div','popitem'); b.appendChild(el('div',null,t.name));
-      if(t.description) b.appendChild(el('div','d', t.description));
-      pop.appendChild(b);
-    });
-    if((META?.skills||[]).length){
-      pop.appendChild(el('div','cap-h','技能 (Skills) — 预设工作流'));
-      META.skills.forEach(s=>{
-        const b = el('div','popitem'); b.appendChild(el('div',null,'/'+s.name));
-        if(s.description) b.appendChild(el('div','d', s.description));
-        b.onclick = ()=>{ closePop(); input.value='/'+s.name+' '; input.focus(); };
-        pop.appendChild(b);
-      });
-    }
-  });
-}
-
 /* ---- tiny safe markdown (escape first) ---- */
 function esc(s){ return s.replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
 function renderMarkdown(src){
@@ -232,18 +205,7 @@ function renderMarkdown(src){
   return s;
 }
 
-/* ---- tool rendering ---- */
-const TOOL_ICONS={Bash:'terminal-2',Read:'file-text',Write:'file-plus',Edit:'edit',Glob:'folder-search',Grep:'search',Agent:'robot',Skill:'wand',TaskCreate:'checklist',TaskUpdate:'checklist',TaskList:'checklist',TaskGet:'checklist'};
-function toolIcon(n){ if(n.startsWith('mcp__'))return 'plug-connected'; return TOOL_ICONS[n]||'tool'; }
-function toolSub(name,inp){
-  inp=inp||{};
-  if(name==='Bash')return inp.command||'';
-  if(['Read','Write','Edit'].includes(name))return inp.file_path||'';
-  if(['Glob','Grep'].includes(name))return (inp.pattern||'')+(inp.path?(' in '+inp.path):'');
-  if(name==='Skill')return '/'+(inp.skill||'')+(inp.args?(' '+inp.args):'');
-  if(name==='Agent')return '('+(inp.subagent_type||'general-purpose')+') '+(inp.description||'');
-  try{return JSON.stringify(inp).slice(0,140);}catch(e){return '';}
-}
+/* ---- message rendering ---- */
 function addAssistant(){
   clearEmpty();
   const wrap=el('div','amsg');
@@ -251,39 +213,11 @@ function addAssistant(){
   const body=el('div'); body.style.cssText='flex:1;min-width:0;';
   const txt=el('div','atxt'); body.appendChild(txt);
   wrap.appendChild(av); wrap.appendChild(body); tinner.appendChild(wrap); scrollDown();
-  return {body,txt,cards:{},full:''};
+  return {body,txt,full:''};
 }
 function addUser(text){ clearEmpty(); tinner.appendChild(el('div','ubub',text)); scrollDown(); }
-function addToolCard(ctx,ev){
-  const card=el('div','art');
-  const tile=el('div','atile'); tile.innerHTML='<i class="ti ti-'+toolIcon(ev.name)+'" style="font-size:18px;color:var(--color-text-secondary)"></i>';
-  const mid=el('div'); mid.style.cssText='flex:1;min-width:0;';
-  const tt=el('div',null,ev.name); tt.style.cssText='font-size:13px;font-weight:600;';
-  const sub=el('div',null,toolSub(ev.name,ev.input)); sub.style.cssText='font-size:11px;color:var(--color-text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
-  mid.appendChild(tt); mid.appendChild(sub);
-  const st=el('div'); st.innerHTML='<i class="ti ti-loader-2 spin" style="font-size:17px;color:var(--color-text-tertiary)"></i>';
-  card.appendChild(tile); card.appendChild(mid); card.appendChild(st);
-  const res=el('pre','tool-result'); res.style.display='none';
-  ctx.body.appendChild(card); ctx.body.appendChild(res);
-  ctx.cards[ev.id]={st,res}; scrollDown();
-}
-function setToolResult(ctx,ev){
-  const c=ctx.cards[ev.tool_use_id]; if(!c)return;
-  c.st.innerHTML = ev.is_error
-    ? '<i class="ti ti-alert-triangle" style="font-size:17px;color:#dc2626"></i>'
-    : '<i class="ti ti-check" style="font-size:17px;color:#16a34a"></i>';
-  const text=(ev.content||'').trim();
-  if(text){
-    c.res.textContent = text.length>4000 ? text.slice(0,4000)+'\n… (truncated)' : text;
-    c.res.style.display='block';
-    if(ev.is_error) c.res.classList.add('err');
-  }
-  scrollDown();
-}
 function handle(ctx,ev){
   if(ev.type==='text'){ ctx.full+=ev.text; ctx.txt.textContent=ctx.full; scrollDown(); }
-  else if(ev.type==='tool_use'){ addToolCard(ctx,ev); }
-  else if(ev.type==='tool_result'){ setToolResult(ctx,ev); }
   else if(ev.type==='error'){ ctx.body.appendChild(el('div','err-line','⚠ '+ev.error)); scrollDown(); }
   else if(ev.type==='done'){
     if(ctx.full){ ctx.txt.classList.add('rendered'); ctx.txt.innerHTML=renderMarkdown(ctx.full); }
@@ -330,7 +264,6 @@ sendBtn.onclick=send;
 input.addEventListener('keydown',e=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); send(); }});
 $('newchat').onclick=newChat;
 $('modelpill').onclick=(e)=>{ e.stopPropagation(); modelMenu(); };
-['capbtn','capbtn2','capbtn3'].forEach(id=>{ const b=$(id); if(b) b.onclick=(e)=>{ e.stopPropagation(); capMenu(b); }; });
 loadMeta();
 input.focus();
 </script>
