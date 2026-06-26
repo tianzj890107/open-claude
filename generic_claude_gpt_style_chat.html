@@ -72,6 +72,14 @@ html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"Seg
 .modal .mnote{margin-top:14px;font-size:12px;color:var(--color-text-tertiary);background:var(--color-background-secondary);border:0.5px solid var(--color-border-tertiary);border-radius:9px;padding:9px 11px;}
 .modal .mclose{margin-top:16px;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border:0.5px solid var(--color-border-secondary);border-radius:10px;background:var(--color-background-primary);color:var(--color-text-primary);font-size:13px;cursor:pointer;}
 .modal .mclose:hover{background:var(--color-background-tertiary);}
+/* model selector inside the 模型参数 panel */
+.modellist{display:flex;flex-direction:column;gap:5px;}
+.modelopt{display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:9px 11px;border:0.5px solid var(--color-border-tertiary);border-radius:10px;background:var(--color-background-primary);color:var(--color-text-primary);font-size:13px;cursor:pointer;transition:background .15s,border-color .15s;}
+.modelopt:hover{background:var(--color-background-tertiary);}
+.modelopt.on{border-color:var(--color-border-info);background:var(--color-background-secondary);}
+.modelopt i{font-size:17px;color:var(--color-text-tertiary);flex-shrink:0;}
+.modelopt.on i{color:#6366f1;}
+.modelopt .mid{margin-left:auto;font-size:11px;color:var(--color-text-tertiary);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}
 .uav{width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,#10b981,#06b6d4);display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;font-weight:500;flex-shrink:0;}
 .main{flex:1;min-width:0;display:flex;flex-direction:column;}
 .topbar{display:flex;align-items:center;gap:6px;padding:11px 16px;border-bottom:0.5px solid var(--color-border-tertiary);position:relative;}
@@ -202,7 +210,7 @@ html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"Seg
       </div>
     </div>
     <div class="mbody" id="modal-body"></div>
-    <div class="mnote">该面板为前端占位，功能正在开发中（等待后端接入）。</div>
+    <div class="mnote" id="modal-note">该面板为前端占位，功能正在开发中（等待后端接入）。</div>
     <button class="mclose" id="modal-close"><i class="ti ti-x" style="font-size:15px" aria-hidden="true"></i>关闭</button>
   </div>
 </div>
@@ -228,27 +236,23 @@ async function loadMeta(){
   }catch(e){ $('modelpill').firstChild.nodeValue = '未连接 '; }
 }
 
-/* ---- popover: model selector ---- */
-let openPop = null;
-function closePop(){ if(openPop){ openPop.remove(); openPop=null; document.removeEventListener('click', onDoc); } }
-function onDoc(e){ if(openPop && !openPop.contains(e.target)) closePop(); }
-function showPop(anchor, build){
-  closePop();
-  const pop = el('div','pop'); build(pop);
-  document.body.appendChild(pop);
-  const r = anchor.getBoundingClientRect();
-  pop.style.top = (r.bottom+6)+'px';
-  pop.style.left = Math.min(r.left, window.innerWidth - pop.offsetWidth - 12)+'px';
-  openPop = pop;
-  setTimeout(()=>document.addEventListener('click', onDoc), 0);
+/* ---- model switching (managed in the 模型参数 settings panel) ---- */
+async function switchModel(id){
+  try{
+    await fetch('/api/model',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:id})});
+  }catch(e){}
+  if(META) META.model=id;
+  $('modelpill').firstChild.nodeValue=id+' ';
 }
-function modelMenu(){
-  showPop($('modelpill'), (pop)=>{
-    (META?.models||[]).forEach(m=>{
-      const b = el('button','popitem', (m.id===META.model?'● ':'○ ')+m.label);
-      b.onclick = async ()=>{ closePop(); await fetch('/api/model',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:m.id})}); META.model=m.id; $('modelpill').firstChild.nodeValue=m.id+' '; };
-      pop.appendChild(b);
-    });
+function renderModelList(container){
+  container.innerHTML='';
+  (META?.models||[]).forEach(m=>{
+    const cur = m.id===META?.model;
+    const b=el('button','modelopt'+(cur?' on':''));
+    b.innerHTML='<i class="ti ti-'+(cur?'circle-check-filled':'circle')+'" aria-hidden="true"></i>'
+      +'<span>'+m.label+'</span><span class="mid">'+m.id+'</span>';
+    b.onclick=async ()=>{ await switchModel(m.id); renderModelList(container); };
+    container.appendChild(b);
   });
 }
 /* ---- tiny safe markdown (escape first) ---- */
@@ -335,7 +339,18 @@ function openPanel(key){
   $('modal-title').textContent=p.title;
   $('modal-cat').textContent=p.cat;
   $('modal-icon').className='ti ti-'+p.icon;
-  $('modal-body').textContent=p.desc;
+  const body=$('modal-body'), note=$('modal-note');
+  if(key==='modelparams'){
+    // Functional panel: model selection lives here.
+    body.innerHTML='<div style="margin-bottom:10px">选择对话使用的模型（切换立即生效）：</div>'
+      +'<div id="model-list" class="modellist"></div>'
+      +'<div style="margin-top:14px;color:var(--color-text-tertiary)">温度、最大输出 token、思考预算等推理参数即将在此面板提供。</div>';
+    renderModelList(body.querySelector('#model-list'));
+    note.style.display='none';
+  }else{
+    body.textContent=p.desc;
+    note.style.display='';
+  }
   $('modal-mask').classList.add('show');
 }
 function closeModal(){ $('modal-mask').classList.remove('show'); }
@@ -355,7 +370,7 @@ document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeModal(); });
 sendBtn.onclick=send;
 input.addEventListener('keydown',e=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); send(); }});
 $('newchat').onclick=newChat;
-$('modelpill').onclick=(e)=>{ e.stopPropagation(); modelMenu(); };
+$('modelpill').onclick=(e)=>{ e.stopPropagation(); openPanel('modelparams'); };
 loadMeta();
 input.focus();
 </script>
