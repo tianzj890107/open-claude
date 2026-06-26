@@ -80,6 +80,23 @@ html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"Seg
 .modelopt i{font-size:17px;color:var(--color-text-tertiary);flex-shrink:0;}
 .modelopt.on i{color:#6366f1;}
 .modelopt .mid{margin-left:auto;font-size:11px;color:var(--color-text-tertiary);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}
+/* inference-parameter controls */
+.phead{font-size:12px;font-weight:600;color:var(--color-text-secondary);margin:18px 0 4px;}
+.prow{display:flex;align-items:center;gap:10px;padding:9px 0;border-top:0.5px solid var(--color-border-tertiary);}
+.prow label{flex:1;font-size:13px;color:var(--color-text-primary);}
+.prow .hint{display:block;font-size:11px;color:var(--color-text-tertiary);margin-top:1px;font-weight:400;}
+.prow input[type=number]{width:118px;padding:6px 9px;border:0.5px solid var(--color-border-secondary);border-radius:8px;background:var(--color-background-primary);color:var(--color-text-primary);font-size:13px;}
+.prow input[type=range]{width:130px;}
+.pinline{display:flex;align-items:center;gap:8px;}
+.pinline span{font-size:12px;color:var(--color-text-tertiary);min-width:40px;text-align:right;}
+.prow.disabled{opacity:.4;pointer-events:none;}
+.sw{position:relative;width:38px;height:22px;flex-shrink:0;}
+.sw input{opacity:0;width:0;height:0;}
+.sw .sl{position:absolute;inset:0;border-radius:22px;background:var(--color-border-secondary);transition:background .15s;cursor:pointer;}
+.sw .sl:before{content:"";position:absolute;width:16px;height:16px;left:3px;top:3px;border-radius:50%;background:#fff;transition:transform .15s;}
+.sw input:checked + .sl{background:#6366f1;}
+.sw input:checked + .sl:before{transform:translateX(16px);}
+.pnote{margin-top:10px;font-size:12px;color:var(--color-text-tertiary);}
 .uav{width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,#10b981,#06b6d4);display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;font-weight:500;flex-shrink:0;}
 .main{flex:1;min-width:0;display:flex;flex-direction:column;}
 .topbar{display:flex;align-items:center;gap:6px;padding:11px 16px;border-bottom:0.5px solid var(--color-border-tertiary);position:relative;}
@@ -255,6 +272,45 @@ function renderModelList(container){
     container.appendChild(b);
   });
 }
+async function saveParams(patch){
+  try{
+    const r=await fetch('/api/params',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(patch)});
+    const j=await r.json(); if(j && !j.error && META) META.params=j;
+  }catch(e){}
+}
+function buildModelPanel(body){
+  const p=(META&&META.params)||{};
+  const def=p.default_max_tokens||16384;
+  body.innerHTML=
+    '<div style="margin-bottom:8px">选择对话使用的模型（切换立即生效）：</div>'
+   +'<div id="model-list" class="modellist"></div>'
+   +'<div class="phead">推理参数</div>'
+   +'<div class="prow"><label>最大输出 token<span class="hint">留空＝使用默认 '+def+'</span></label>'
+     +'<input id="p-maxtok" type="number" min="1" step="256" placeholder="'+def+'" value="'+(p.max_tokens!=null?p.max_tokens:'')+'"></div>'
+   +'<div class="prow" id="p-temp-row"><label>温度 (temperature)<span class="hint">越高越发散，范围 0–2</span></label>'
+     +'<div class="pinline"><input id="p-temp" type="range" min="0" max="2" step="0.1" value="'+(p.temperature!=null?p.temperature:1)+'">'
+     +'<span id="p-temp-val">'+(p.temperature!=null?Number(p.temperature).toFixed(1):'默认')+'</span></div></div>'
+   +'<div class="prow"><label>扩展思考 (thinking)<span class="hint">开启后温度由模型固定为 1</span></label>'
+     +'<span class="sw"><input id="p-think" type="checkbox" '+(p.thinking?'checked':'')+'><span class="sl"></span></span></div>'
+   +'<div class="prow" id="p-budget-row"><label>思考预算 token<span class="hint">思考开启时生效，≥1024</span></label>'
+     +'<input id="p-budget" type="number" min="1024" step="512" value="'+(p.thinking_budget!=null?p.thinking_budget:8000)+'"></div>';
+  renderModelList(body.querySelector('#model-list'));
+
+  const maxtok=body.querySelector('#p-maxtok');
+  const temp=body.querySelector('#p-temp'), tempVal=body.querySelector('#p-temp-val');
+  const think=body.querySelector('#p-think'), budget=body.querySelector('#p-budget');
+  function syncThinking(){
+    const on=think.checked;
+    body.querySelector('#p-temp-row').classList.toggle('disabled', on);
+    body.querySelector('#p-budget-row').classList.toggle('disabled', !on);
+  }
+  syncThinking();
+  maxtok.onchange=()=>saveParams({max_tokens: maxtok.value===''?null:Number(maxtok.value)});
+  temp.oninput=()=>{ tempVal.textContent=Number(temp.value).toFixed(1); };
+  temp.onchange=()=>saveParams({temperature:Number(temp.value)});
+  think.onchange=()=>{ syncThinking(); saveParams({thinking: think.checked}); };
+  budget.onchange=()=>saveParams({thinking_budget:Number(budget.value)});
+}
 /* ---- tiny safe markdown (escape first) ---- */
 function esc(s){ return s.replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
 function renderMarkdown(src){
@@ -341,11 +397,8 @@ function openPanel(key){
   $('modal-icon').className='ti ti-'+p.icon;
   const body=$('modal-body'), note=$('modal-note');
   if(key==='modelparams'){
-    // Functional panel: model selection lives here.
-    body.innerHTML='<div style="margin-bottom:10px">选择对话使用的模型（切换立即生效）：</div>'
-      +'<div id="model-list" class="modellist"></div>'
-      +'<div style="margin-top:14px;color:var(--color-text-tertiary)">温度、最大输出 token、思考预算等推理参数即将在此面板提供。</div>';
-    renderModelList(body.querySelector('#model-list'));
+    // Functional panel: model selection + inference parameters live here.
+    buildModelPanel(body);
     note.style.display='none';
   }else{
     body.textContent=p.desc;

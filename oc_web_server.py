@@ -37,6 +37,7 @@ from open_claude.config import (
     AVAILABLE_MODELS,
     PROVIDERS,
     get_api_key_for,
+    get_max_tokens,
     get_model,
     get_model_provider,
 )
@@ -87,13 +88,43 @@ class Bridge:
 
     def meta(self) -> dict:
         conv = self.conv
-        # A pure chat agent: expose only what the UI needs to talk and switch
-        # models — no tools or skills are surfaced.
+        # A pure chat agent: expose only what the UI needs to talk, switch
+        # models, and tune inference params — no tools or skills are surfaced.
         return {
             "model": conv.model,
             "profile": conv.profile.name,
             "models": [{"id": m["id"], "label": m["label"]} for m in AVAILABLE_MODELS],
+            "params": self.params(),
         }
+
+    def params(self) -> dict:
+        """Current inference parameters (read from the active profile)."""
+        p = self.conv.profile
+        return {
+            "temperature": p.temperature,
+            "max_tokens": p.max_tokens,
+            "default_max_tokens": get_max_tokens(),
+            "thinking": p.thinking,
+            "thinking_budget": p.thinking_budget,
+        }
+
+    def set_params(self, data: dict) -> dict:
+        """Patch inference parameters; only provided keys are changed."""
+        with self.lock:
+            p = self.conv.profile
+            if "temperature" in data:
+                v = data["temperature"]
+                p.temperature = None if v in (None, "") else max(0.0, min(2.0, float(v)))
+            if "max_tokens" in data:
+                v = data["max_tokens"]
+                p.max_tokens = None if v in (None, "") else max(1, int(v))
+            if "thinking" in data:
+                p.thinking = bool(data["thinking"])
+            if "thinking_budget" in data:
+                v = data["thinking_budget"]
+                if v not in (None, ""):
+                    p.thinking_budget = max(1024, int(v))
+        return self.params()
 
     def reset(self):
         with self.lock:
@@ -249,6 +280,12 @@ class Handler(BaseHTTPRequestHandler):
             if mid:
                 bridge.set_model(mid)
             self._send_json({"ok": True, "model": bridge.conv.model})
+        elif self.path == "/api/params":
+            data = self._read_body()
+            try:
+                self._send_json(bridge.set_params(data))
+            except (ValueError, TypeError) as e:
+                self._send_json({"error": str(e)}, status=400)
         else:
             self.send_error(404)
 
