@@ -24,7 +24,9 @@ then open http://127.0.0.1:47313/ in a browser.
 """
 
 import argparse
+import base64
 import json
+import mimetypes
 import os
 import re
 import sys
@@ -33,7 +35,7 @@ import time
 import traceback
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from open_claude.repl import Conversation
 from open_claude.api import stream_message
@@ -109,6 +111,43 @@ def project_path(name: str) -> str | None:
     if not (p == root or p.startswith(root + os.sep)) or p == root:
         return None
     return p if os.path.isdir(p) else None
+
+
+_SKIP_DIRS = {".git", ".open-claude", "node_modules", "__pycache__", ".venv", "venv"}
+
+
+def list_project_files(base: str) -> list[dict]:
+    """Flat file listing of a project (for the preview panel's tree)."""
+    out = []
+    for root, dirs, files in os.walk(base):
+        dirs[:] = [d for d in dirs if d not in _SKIP_DIRS and not d.startswith(".")]
+        for fn in files:
+            fp = os.path.join(root, fn)
+            try:
+                st = os.stat(fp)
+            except OSError:
+                continue
+            out.append({"path": os.path.relpath(fp, base).replace("\\", "/"),
+                        "size": st.st_size, "mtime": st.st_mtime})
+            if len(out) >= 2000:
+                return out
+    return out
+
+
+def resolve_project_file(project: str, rel: str) -> str | None:
+    """Resolve a (possibly absolute) file path against a project, confined to it.
+
+    os.path.join ignores `base` when `rel` is absolute, so tool-card clicks that
+    carry an absolute path also work — the realpath containment check below is
+    what actually enforces the boundary.
+    """
+    base = project_path(project)
+    if not base or not rel:
+        return None
+    p = os.path.realpath(os.path.join(base, rel))
+    if not (p == base or p.startswith(base + os.sep)):
+        return None
+    return p
 
 
 # ---------------------------------------------------------------------------
@@ -339,9 +378,19 @@ class Handler(BaseHTTPRequestHandler):
     # -- routes ----------------------------------------------------------------
 
     def do_GET(self):
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = unquote(parsed.path)
+        qs = parse_qs(parsed.query)
         if path in ("/", "/index.html"):
             self._serve_html()
+        elif path == "/api/files":
+            base = project_path((qs.get("project") or [""])[0])
+            if not base:
+                self._send_json({"error": "项目不存在"}, status=404)
+            else:
+                self._send_json({"files": list_project_files(base)})
+        elif path.startswith("/p/"):
+            self._serve_project_file(path)
         elif path == "/api/meta":
             self._send_json({
                 "model": get_model(),
@@ -394,12 +443,74 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(set_params(self._read_body()))
             except (ValueError, TypeError) as e:
                 self._send_json({"error": str(e)}, status=400)
+        elif path == "/api/upload":
+            self._handle_upload()
         else:
             m = re.match(r"^/api/tasks/([0-9a-f]+)/send$", path)
             if m:
                 self._handle_send(m.group(1))
                 return
             self.send_error(404)
+
+    def _serve_project_file(self, path: str):
+        """GET /p/<project>/<path> — raw file from a sandbox project.
+
+        Served under a real URL path (not a query param) so that relative
+        resources inside a previewed HTML page resolve correctly in the iframe.
+        """
+        m = re.match(r"^/p/([^/]+)/(.+)$", path)
+        f = resolve_project_file(m.group(1), m.group(2)) if m else None
+        if not f or not os.path.isfile(f):
+            self.send_error(404)
+            return
+        ctype, _ = mimetypes.guess_type(f)
+        ctype = ctype or "application/octet-stream"
+        if ctype.startswith("text/") or ctype in ("application/json", "application/javascript"):
+            ctype += "; charset=utf-8"
+        try:
+            with open(f, "rb") as fh:
+                body = fh.read()
+        except OSError:
+            self.send_error(500)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _handle_upload(self):
+        """POST /api/upload {project, name, data(base64)} — save into project root."""
+        data = self._read_body()
+        base = project_path(data.get("project", ""))
+        name = os.path.basename(str(data.get("name") or "")).strip()
+        if not base:
+            self._send_json({"error": "项目不存在"}, status=400)
+            return
+        if not name or name.startswith("."):
+            self._send_json({"error": "文件名无效"}, status=400)
+            return
+        try:
+            blob = base64.b64decode(data.get("data", ""), validate=True)
+        except Exception:
+            self._send_json({"error": "文件数据无效"}, status=400)
+            return
+        if len(blob) > 20 * 1024 * 1024:
+            self._send_json({"error": "文件过大(上限 20MB)"}, status=400)
+            return
+        stem, ext = os.path.splitext(name)
+        final, i = name, 1
+        while os.path.exists(os.path.join(base, final)):
+            final = f"{stem}({i}){ext}"
+            i += 1
+        try:
+            with open(os.path.join(base, final), "wb") as fh:
+                fh.write(blob)
+        except OSError as e:
+            self._send_json({"error": f"写入失败: {e}"}, status=500)
+            return
+        self._send_json({"ok": True, "name": final})
 
     def _serve_html(self):
         try:

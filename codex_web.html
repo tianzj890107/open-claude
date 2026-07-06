@@ -87,7 +87,7 @@ input,textarea,select{font-family:inherit;color:inherit}
 #taskview{flex:1;display:none;flex-direction:column;min-height:0}
 #taskhead{display:flex;align-items:center;gap:10px;padding:13px 22px;border-bottom:1px solid var(--border)}
 #taskhead .title{font-weight:600;font-size:14.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#taskhead .spin{display:none;align-items:center;gap:7px;font-size:12px;color:var(--amber);margin-left:auto}
+#taskhead .spin{display:none;align-items:center;gap:7px;font-size:12px;color:var(--amber)}
 #taskhead .spin.on{display:flex}
 .spinner{width:12px;height:12px;border:2px solid rgba(210,153,34,.3);border-top-color:var(--amber);border-radius:50%;animation:rot .8s linear infinite}
 @keyframes rot{to{transform:rotate(360deg)}}
@@ -137,6 +137,36 @@ input,textarea,select{font-family:inherit;color:inherit}
 
 .done-note{font-size:11.5px;color:var(--dimmer);text-align:center;padding:2px 0}
 
+/* attach chips */
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.chips:empty{display:none}
+.fchip{display:flex;align-items:center;gap:6px;border:1px solid var(--border);background:#232327;border-radius:7px;padding:3px 8px;font-size:12px;color:var(--dim)}
+.fchip b{color:var(--text);font-weight:500;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fchip .x{cursor:pointer;color:var(--dimmer)}
+.fchip .x:hover{color:var(--red)}
+
+/* right preview panel */
+#preview{width:46%;min-width:380px;border-left:1px solid var(--border);display:none;flex-direction:column;background:var(--panel)}
+#preview.open{display:flex}
+#pvhead{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border);font-size:13px}
+#pvtitle{font-family:var(--mono);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1}
+.pvbtn{border:1px solid var(--border);border-radius:6px;padding:3px 9px;font-size:12px;color:var(--dim);background:transparent;flex:none}
+.pvbtn:hover{color:var(--text);background:#26262b}
+#pvbody{flex:1;overflow:auto;min-height:0;display:flex;flex-direction:column}
+.pv-code{font-family:var(--mono);font-size:12px;line-height:1.55;padding:12px 14px;white-space:pre;color:#c8c8cf}
+.pv-code .no{color:var(--dimmer);user-select:none;display:inline-block;width:3.2em;text-align:right;margin-right:12px}
+.pv-md{padding:16px 20px}
+#pvbody iframe{width:100%;flex:1;border:none;background:#fff}
+#pvbody img{max-width:92%;display:block;margin:20px auto}
+.tree{padding:10px 8px;font-size:12.5px}
+.tree .dir{color:var(--dim);padding:5px 8px 2px;font-weight:600}
+.tree .fil{display:flex;justify-content:space-between;gap:8px;padding:3px 8px;border-radius:6px;cursor:pointer;font-family:var(--mono);font-size:12px}
+.tree .fil:hover{background:#232327}
+.tree .fil .sz{color:var(--dimmer);flex:none}
+.pv-empty{color:var(--dimmer);text-align:center;padding:40px 20px;font-size:13px;line-height:1.7}
+.path.link{cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px}
+.path.link:hover{color:var(--text)}
+
 /* modal */
 #mask{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:100;display:none;align-items:center;justify-content:center}
 #mask.open{display:flex}
@@ -173,7 +203,9 @@ input,textarea,select{font-family:inherit;color:inherit}
     <h1>接下来要做什么?</h1>
     <div class="composer">
       <textarea id="input" rows="2" placeholder="描述一个任务,例如:写一个贪吃蛇网页游戏…"></textarea>
+      <div class="chips" id="chips1"></div>
       <div class="crow">
+        <button class="cbtn" id="attach1" title="上传文件到项目">📎</button>
         <button class="cbtn" id="projbtn">📁 <span id="projlabel">选择项目</span> <span class="caret">▼</span></button>
         <button class="cbtn" id="modelbtn">⚙ <span id="modellabel">模型</span> <span class="caret">▼</span></button>
         <button class="cbtn" id="parambtn">⚗ 参数</button>
@@ -188,13 +220,16 @@ input,textarea,select{font-family:inherit;color:inherit}
       <span class="dot" id="headdot"></span>
       <span class="title" id="headtitle"></span>
       <span class="chip" id="headproj"></span>
+      <button class="pvbtn" id="filesbtn" style="margin-left:auto">📂 文件</button>
       <span class="spin" id="headspin"><span class="spinner"></span>正在工作…</span>
     </div>
     <div id="feed"><div class="feedcol" id="feedcol"></div></div>
     <div id="taskcomposer">
       <div class="composer">
         <textarea id="input2" rows="1" placeholder="继续对这个任务下指令…"></textarea>
+        <div class="chips" id="chips2"></div>
         <div class="crow">
+          <button class="cbtn" id="attach2" title="上传文件到项目">📎</button>
           <button class="cbtn" id="modelbtn2">⚙ <span id="modellabel2">模型</span> <span class="caret">▼</span></button>
           <button class="cbtn" id="parambtn2">⚗ 参数</button>
           <button id="sendbtn2" title="发送">↑</button>
@@ -204,6 +239,21 @@ input,textarea,select{font-family:inherit;color:inherit}
   </div>
 
 </div>
+
+<!-- ======== right preview panel ======== -->
+<div id="preview">
+  <div id="pvhead">
+    <button class="pvbtn" id="pvback" style="display:none">‹ 文件</button>
+    <span id="pvtitle">项目文件</span>
+    <button class="pvbtn" id="pvsrc" style="display:none">源码</button>
+    <button class="pvbtn" id="pvopen" style="display:none" title="新标签页打开">↗</button>
+    <button class="pvbtn" id="pvrefresh" title="刷新">⟳</button>
+    <button class="pvbtn" id="pvclose" title="关闭">✕</button>
+  </div>
+  <div id="pvbody"></div>
+</div>
+
+<input type="file" id="fpick" multiple style="display:none">
 
 <!-- popovers -->
 <div class="pop" id="pop-proj"></div>
@@ -332,6 +382,7 @@ function showHome(){
   ACTIVE = null;
   $("home").style.display = "flex";
   $("taskview").style.display = "none";
+  closePreview();
   renderTaskList();
   $("input").focus();
 }
@@ -351,6 +402,7 @@ async function openTask(id){
   for (const ev of (t.log || [])) appendEvent(ev, col);
   renderTaskList();
   scrollFeed(true);
+  if (previewOpen()) showTree();   // panel follows the task's project
   $("input2").focus();
 }
 function setWorking(on){
@@ -452,6 +504,12 @@ function appendEvent(ev, col){
     } else {
       body.innerHTML = `<div class="term"><span class="out"></span></div>`;
     }
+    if (inp.file_path && ["Read", "Write", "Edit"].includes(ev.name)){
+      const pathEl = card.querySelector(".path");
+      pathEl.classList.add("link");
+      pathEl.title = "在右侧预览";
+      pathEl.onclick = e => { e.stopPropagation(); openFile(inp.file_path); };
+    }
     col.appendChild(card);
     if (ev.id) toolCards[ev.id] = card;
   }
@@ -499,14 +557,24 @@ async function startTask(){
   $("feedcol").innerHTML = "";
   toolCards = {}; streamEl = null;
   renderTaskList();
-  await sendToActive(text);
+  let msg = text;
+  if (PENDING_FILES.length){
+    const names = await uploadPending(t.project);
+    if (names.length) msg += "\n\n[用户上传了文件到项目根目录: " + names.join(", ") + "]";
+  }
+  await sendToActive(msg);
 }
 async function sendFollowup(){
   const text = $("input2").value.trim();
   if (!text || BUSY || !ACTIVE) return;
   $("input2").value = "";
   autosize($("input2"));
-  await sendToActive(text);
+  let msg = text;
+  if (PENDING_FILES.length){
+    const names = await uploadPending(ACTIVE.project);
+    if (names.length) msg += "\n\n[用户上传了文件到项目根目录: " + names.join(", ") + "]";
+  }
+  await sendToActive(msg);
 }
 async function sendToActive(text){
   BUSY = true; setWorking(true);
@@ -555,6 +623,7 @@ async function sendToActive(text){
     }
     renderTaskList();
     scrollFeed(false);
+    if (previewOpen() && PV.mode === "tree") showTree();  // pick up new files
   }
 }
 
@@ -664,6 +733,158 @@ $("projcreate").onclick = async () => {
 $("projname").addEventListener("keydown", e => { if (e.key === "Enter") $("projcreate").click(); });
 $("mask").addEventListener("click", e => { if (e.target === $("mask")) $("mask").classList.remove("open"); });
 
+/* ---------------- file upload ---------------- */
+let PENDING_FILES = [];
+
+$("fpick").onchange = () => {
+  for (const f of $("fpick").files) PENDING_FILES.push(f);
+  $("fpick").value = "";
+  renderChips();
+};
+function renderChips(){
+  for (const id of ["chips1", "chips2"]){
+    const box = $(id); box.innerHTML = "";
+    PENDING_FILES.forEach((f, i) => {
+      const c = document.createElement("span");
+      c.className = "fchip";
+      c.innerHTML = `📄 <b>${esc(f.name)}</b> <span class="x">✕</span>`;
+      c.querySelector(".x").onclick = () => { PENDING_FILES.splice(i, 1); renderChips(); };
+      box.appendChild(c);
+    });
+  }
+}
+function readB64(file){
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(String(r.result).split(",")[1] || "");
+    r.onerror = rej;
+    r.readAsDataURL(file);
+  });
+}
+async function uploadPending(project){
+  const names = [];
+  for (const f of PENDING_FILES){
+    if (f.size > 20 * 1024 * 1024){ alert(`${f.name} 超过 20MB,已跳过`); continue; }
+    try{
+      const data = await readB64(f);
+      const j = await api("/api/upload", {method:"POST", headers:{"Content-Type":"application/json"},
+                                          body: JSON.stringify({project, name: f.name, data})});
+      if (j.ok) names.push(j.name); else alert(f.name + " 上传失败: " + (j.error || ""));
+    }catch(e){ alert(f.name + " 上传失败: " + e.message); }
+  }
+  PENDING_FILES = []; renderChips();
+  return names;
+}
+
+/* ---------------- right preview panel ---------------- */
+const PV = {mode: "tree", file: null, showSrc: false};
+const IMG_EXT = new Set(["png","jpg","jpeg","gif","webp","svg","ico","bmp"]);
+
+function pvProject(){ return ACTIVE ? ACTIVE.project : SELECTED_PROJECT; }
+function previewOpen(){ return $("preview").classList.contains("open"); }
+function closePreview(){ $("preview").classList.remove("open"); }
+function extOf(p){ const i = p.lastIndexOf("."); return i < 0 ? "" : p.slice(i + 1).toLowerCase(); }
+function fmtSize(n){
+  return n < 1024 ? n + " B" : n < 1048576 ? (n/1024).toFixed(1) + " KB" : (n/1048576).toFixed(1) + " MB";
+}
+function fileURL(proj, rel){
+  return "/p/" + encodeURIComponent(proj) + "/" +
+         String(rel).replace(/\\/g, "/").split("/").map(encodeURIComponent).join("/");
+}
+
+async function showTree(){
+  const proj = pvProject();
+  if (!proj) return;
+  $("preview").classList.add("open");
+  PV.mode = "tree"; PV.file = null;
+  $("pvback").style.display = "none";
+  $("pvsrc").style.display = "none";
+  $("pvopen").style.display = "none";
+  $("pvtitle").textContent = proj + " / 项目文件";
+  const j = await api("/api/files?project=" + encodeURIComponent(proj));
+  const files = j.files || [];
+  const body = $("pvbody");
+  if (!files.length){
+    body.innerHTML = '<div class="pv-empty">项目还是空的。<br>让智能体生成一些文件,或用 📎 上传。</div>';
+    return;
+  }
+  files.sort((a, b) => {
+    const da = a.path.slice(0, a.path.lastIndexOf("/") + 1);
+    const db = b.path.slice(0, b.path.lastIndexOf("/") + 1);
+    return da.localeCompare(db) || a.path.localeCompare(b.path);
+  });
+  let html = '<div class="tree">', lastDir = null;
+  for (const f of files){
+    const i = f.path.lastIndexOf("/");
+    const dir = i < 0 ? "" : f.path.slice(0, i);
+    const name = i < 0 ? f.path : f.path.slice(i + 1);
+    if (dir !== lastDir){
+      lastDir = dir;
+      if (dir) html += `<div class="dir">📁 ${esc(dir)}/</div>`;
+    }
+    html += `<div class="fil" data-p="${esc(f.path)}"><span style="${dir ? "padding-left:14px" : ""}">${esc(name)}</span><span class="sz">${fmtSize(f.size)}</span></div>`;
+  }
+  body.innerHTML = html + "</div>";
+  body.querySelectorAll(".fil").forEach(el => el.onclick = () => openFile(el.dataset.p));
+}
+
+async function openFile(rel){
+  const proj = pvProject();
+  if (!proj || !rel) return;
+  $("preview").classList.add("open");
+  PV.mode = "file";
+  if (PV.file !== rel) PV.showSrc = false;
+  PV.file = rel;
+  $("pvback").style.display = "";
+  $("pvtitle").textContent = rel;
+  const url = fileURL(proj, rel);
+  const ext = extOf(rel);
+  const body = $("pvbody");
+  const canSrc = ext === "html" || ext === "htm" || ext === "md";
+  $("pvsrc").style.display = canSrc ? "" : "none";
+  $("pvsrc").textContent = PV.showSrc ? "预览" : "源码";
+  const openable = ext === "html" || ext === "htm" || ext === "pdf" || IMG_EXT.has(ext);
+  $("pvopen").style.display = openable ? "" : "none";
+  $("pvopen").onclick = () => window.open(url, "_blank");
+  if (!canSrc) PV.showSrc = false;
+
+  if (IMG_EXT.has(ext)){ body.innerHTML = `<img src="${url}" alt="">`; return; }
+  if (ext === "pdf"){ body.innerHTML = `<iframe src="${url}"></iframe>`; return; }
+  if ((ext === "html" || ext === "htm") && !PV.showSrc){
+    body.innerHTML = `<iframe src="${url}" sandbox="allow-scripts"></iframe>`;
+    return;
+  }
+  let r;
+  try{ r = await fetch(url); }catch(e){ body.innerHTML = `<div class="pv-empty">加载失败</div>`; return; }
+  if (!r.ok){ body.innerHTML = `<div class="pv-empty">无法打开文件(${r.status})</div>`; return; }
+  const buf = await r.arrayBuffer();
+  if (buf.byteLength > 1500000){
+    body.innerHTML = `<div class="pv-empty">文件太大(${fmtSize(buf.byteLength)}),不在此预览。</div>`;
+    return;
+  }
+  let text;
+  try{ text = new TextDecoder("utf-8", {fatal:true}).decode(buf); }
+  catch(e){
+    body.innerHTML = `<div class="pv-empty">二进制文件(${fmtSize(buf.byteLength)}),无法预览。</div>`;
+    return;
+  }
+  if (ext === "md" && !PV.showSrc){
+    body.innerHTML = `<div class="pv-md msg-asst">${md(text)}</div>`;
+    return;
+  }
+  const lines = text.split("\n");
+  body.innerHTML = `<div class="pv-code">${lines.map((l, i) => `<span class="no">${i + 1}</span>${esc(l)}`).join("\n")}</div>`;
+}
+
+$("pvclose").onclick = closePreview;
+$("pvback").onclick = showTree;
+$("pvrefresh").onclick = () => { PV.mode === "tree" ? showTree() : openFile(PV.file); };
+$("pvsrc").onclick = () => { PV.showSrc = !PV.showSrc; openFile(PV.file); };
+$("filesbtn").onclick = () => {
+  if (previewOpen() && PV.mode === "tree") closePreview();
+  else showTree();
+};
+
 /* ---------------- wiring ---------------- */
 function autosize(el){
   el.style.height = "auto";
@@ -682,6 +903,7 @@ for (const id of ["input", "input2"]){
 $("sendbtn").onclick = startTask;
 $("sendbtn2").onclick = sendFollowup;
 $("newtask").onclick = showHome;
+$("attach1").onclick = $("attach2").onclick = e => { e.stopPropagation(); $("fpick").click(); };
 $("projbtn").onclick = e => { e.stopPropagation(); closePops(); openProjPop(); };
 $("modelbtn").onclick = e => { e.stopPropagation(); closePops(); openModelPop($("modelbtn")); };
 $("modelbtn2").onclick = e => { e.stopPropagation(); closePops(); openModelPop($("modelbtn2")); };
