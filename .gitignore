@@ -31,3 +31,6 @@ CLAUDE.local.md
 .env
 .env.*
 credentials.json
+
+# Web sandbox projects (created at runtime by oc_codex_server.py)
+sandbox/

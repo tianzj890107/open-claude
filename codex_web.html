@@ -1,0 +1,699 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Open Claude — Codex</title>
+<style>
+:root{
+  --bg:#0f0f10; --panel:#161618; --panel2:#1d1d20; --border:#2a2a2e;
+  --text:#ececf1; --dim:#9a9aa6; --dimmer:#6b6b76;
+  --accent:#ffffff; --green:#3fb950; --red:#f85149; --amber:#d29922;
+  --mono:ui-monospace,SFMono-Regular,Consolas,"Cascadia Mono",Menlo,monospace;
+  --sans:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",Roboto,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px;display:flex;overflow:hidden}
+button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit}
+input,textarea,select{font-family:inherit;color:inherit}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:#333338;border-radius:5px}
+::-webkit-scrollbar-track{background:transparent}
+
+/* ============ sidebar ============ */
+#sidebar{width:264px;min-width:264px;background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column}
+.brand{display:flex;align-items:center;gap:9px;padding:16px 16px 12px}
+.brand .logo{width:26px;height:26px;border-radius:7px;background:linear-gradient(135deg,#3b3b40,#232326);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700}
+.brand .name{font-weight:600;font-size:14px}
+.brand .tag{font-size:10px;color:var(--dimmer);border:1px solid var(--border);border-radius:4px;padding:1px 5px;margin-left:auto}
+#newtask{margin:4px 12px 10px;padding:9px 12px;border:1px solid var(--border);border-radius:9px;background:var(--panel2);display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text)}
+#newtask:hover{background:#232327}
+.sec{padding:10px 16px 6px;font-size:11px;letter-spacing:.06em;color:var(--dimmer);text-transform:uppercase}
+#tasklist{flex:1;overflow-y:auto;padding:0 8px 8px}
+.task-row{padding:8px 10px;border-radius:8px;cursor:pointer;display:flex;flex-direction:column;gap:3px;margin-bottom:2px}
+.task-row:hover{background:#202024}
+.task-row.active{background:#26262b}
+.task-row .t{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.task-row .m{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--dimmer)}
+.dot{width:7px;height:7px;border-radius:50%;background:#4b4b52;flex:none}
+.dot.working{background:var(--amber);animation:pulse 1.1s infinite}
+.dot.error{background:var(--red)}
+@keyframes pulse{50%{opacity:.35}}
+.chip{border:1px solid var(--border);border-radius:4px;padding:0 5px;font-size:10px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:110px}
+#sandboxnote{padding:10px 16px;border-top:1px solid var(--border);font-size:10.5px;color:var(--dimmer);line-height:1.5;word-break:break-all}
+.empty-side{padding:14px 16px;color:var(--dimmer);font-size:12px}
+
+/* ============ main ============ */
+#main{flex:1;display:flex;flex-direction:column;min-width:0}
+
+/* home */
+#home{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;overflow-y:auto}
+#home h1{font-size:26px;font-weight:600;margin-bottom:26px}
+
+/* composer card (shared) */
+.composer{width:100%;max-width:720px;background:var(--panel2);border:1px solid var(--border);border-radius:16px;padding:12px 14px 10px}
+.composer textarea{width:100%;background:none;border:none;outline:none;resize:none;font-size:14px;line-height:1.55;color:var(--text);max-height:220px;min-height:24px}
+.composer textarea::placeholder{color:var(--dimmer)}
+.crow{display:flex;align-items:center;gap:8px;margin-top:10px}
+.cbtn{display:flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:8px;padding:5px 10px;font-size:12px;color:var(--dim);background:transparent}
+.cbtn:hover{background:#26262b;color:var(--text)}
+.cbtn .caret{font-size:9px;opacity:.7}
+#sendbtn,#sendbtn2{margin-left:auto;width:32px;height:32px;border-radius:50%;background:var(--accent);color:#111;display:flex;align-items:center;justify-content:center;font-size:15px;flex:none}
+#sendbtn:disabled,#sendbtn2:disabled{opacity:.3;cursor:default}
+
+/* dropdown popovers */
+.pop{position:fixed;z-index:60;background:#212125;border:1px solid var(--border);border-radius:10px;padding:6px;min-width:210px;max-height:320px;overflow-y:auto;box-shadow:0 12px 32px rgba(0,0,0,.5);display:none}
+.pop.open{display:block}
+.pop .item{padding:7px 10px;border-radius:7px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px}
+.pop .item:hover{background:#2c2c31}
+.pop .item .chk{width:14px;color:var(--green);flex:none}
+.pop .sep{height:1px;background:var(--border);margin:5px 4px}
+.pop .head{padding:6px 10px 4px;font-size:11px;color:var(--dimmer)}
+
+/* params popover */
+.prow{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 10px;font-size:12.5px}
+.prow label{color:var(--dim)}
+.prow input[type=number]{width:84px;background:#141416;border:1px solid var(--border);border-radius:6px;padding:4px 7px;font-size:12px;color:var(--text);outline:none}
+.prow input[type=range]{width:110px;accent-color:#8e8ea0}
+.prow .val{font-family:var(--mono);font-size:11.5px;color:var(--dim);width:32px;text-align:right}
+.prow.off{opacity:.4;pointer-events:none}
+.sw{position:relative;width:34px;height:19px;border-radius:10px;background:#3a3a40;transition:.15s;flex:none;cursor:pointer}
+.sw.on{background:var(--green)}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:15px;height:15px;border-radius:50%;background:#fff;transition:.15s}
+.sw.on::after{left:17px}
+
+/* task view */
+#taskview{flex:1;display:none;flex-direction:column;min-height:0}
+#taskhead{display:flex;align-items:center;gap:10px;padding:13px 22px;border-bottom:1px solid var(--border)}
+#taskhead .title{font-weight:600;font-size:14.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#taskhead .spin{display:none;align-items:center;gap:7px;font-size:12px;color:var(--amber);margin-left:auto}
+#taskhead .spin.on{display:flex}
+.spinner{width:12px;height:12px;border:2px solid rgba(210,153,34,.3);border-top-color:var(--amber);border-radius:50%;animation:rot .8s linear infinite}
+@keyframes rot{to{transform:rotate(360deg)}}
+#feed{flex:1;overflow-y:auto;padding:26px 22px 12px}
+.feedcol{max-width:780px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+#taskcomposer{padding:10px 22px 18px;display:flex;justify-content:center}
+
+/* messages */
+.msg-user{align-self:flex-end;max-width:78%;background:#26262b;border-radius:14px 14px 4px 14px;padding:9px 14px;white-space:pre-wrap;line-height:1.55}
+.msg-asst{line-height:1.65;font-size:14.5px;max-width:100%;overflow-wrap:break-word}
+.msg-asst p{margin:0 0 10px}
+.msg-asst p:last-child{margin-bottom:0}
+.msg-asst h1,.msg-asst h2,.msg-asst h3{margin:14px 0 8px;font-size:1.08em}
+.msg-asst ul,.msg-asst ol{margin:0 0 10px 22px}
+.msg-asst li{margin:3px 0}
+.msg-asst code{font-family:var(--mono);font-size:12.5px;background:#232327;border-radius:4px;padding:1px 5px}
+.msg-asst pre{background:#141416;border:1px solid var(--border);border-radius:9px;padding:11px 13px;overflow-x:auto;margin:0 0 10px}
+.msg-asst pre code{background:none;padding:0;font-size:12.5px;line-height:1.5}
+.msg-asst a{color:#79b8ff}
+.msg-err{color:var(--red);background:rgba(248,81,73,.08);border:1px solid rgba(248,81,73,.35);border-radius:9px;padding:9px 13px;font-size:13px}
+
+/* thinking */
+.think{border-left:2px solid var(--border);padding:2px 0 2px 12px;color:var(--dimmer);font-size:12.5px;white-space:pre-wrap;max-height:72px;overflow:hidden;cursor:pointer}
+.think.open{max-height:none}
+
+/* tool cards */
+.tool{border:1px solid var(--border);border-radius:10px;background:var(--panel);overflow:hidden}
+.tool .thead{display:flex;align-items:center;gap:8px;padding:8px 12px;font-size:12.5px;color:var(--dim);cursor:pointer;user-select:none}
+.tool .thead:hover{background:#1c1c1f}
+.tool .thead .ic{width:16px;text-align:center;flex:none}
+.tool .thead .lbl{color:var(--text)}
+.tool .thead .path{font-family:var(--mono);font-size:12px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tool .thead .st{margin-left:auto;font-size:11px;flex:none}
+.tool .thead .st.run{color:var(--amber)}
+.tool .thead .st.ok{color:var(--green)}
+.tool .thead .st.err{color:var(--red)}
+.tool .tbody{display:none;border-top:1px solid var(--border)}
+.tool.open .tbody{display:block}
+.term{font-family:var(--mono);font-size:12px;line-height:1.55;padding:10px 13px;white-space:pre-wrap;word-break:break-all;max-height:340px;overflow-y:auto;background:#111113}
+.term .cmd{color:#8ab4f8}
+.term .out{color:#c8c8cf}
+.term .errout{color:var(--red)}
+.diff{font-family:var(--mono);font-size:12px;line-height:1.5;max-height:340px;overflow:auto;background:#111113;padding:8px 0}
+.diff .ln{padding:0 13px;white-space:pre-wrap;word-break:break-all}
+.diff .add{background:rgba(63,185,80,.12);color:#7ee787}
+.diff .del{background:rgba(248,81,73,.10);color:#ffa198}
+
+.done-note{font-size:11.5px;color:var(--dimmer);text-align:center;padding:2px 0}
+
+/* modal */
+#mask{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:100;display:none;align-items:center;justify-content:center}
+#mask.open{display:flex}
+.modal{width:380px;background:#1c1c20;border:1px solid var(--border);border-radius:14px;padding:20px}
+.modal h3{font-size:15px;margin-bottom:6px}
+.modal .hint{font-size:12px;color:var(--dimmer);margin-bottom:14px}
+.modal input{width:100%;background:#141416;border:1px solid var(--border);border-radius:8px;padding:9px 12px;font-size:13.5px;outline:none;margin-bottom:8px}
+.modal input:focus{border-color:#4a4a52}
+.modal .err{color:var(--red);font-size:12px;min-height:16px;margin-bottom:8px}
+.modal .btns{display:flex;justify-content:flex-end;gap:8px}
+.modal .btns button{padding:7px 16px;border-radius:8px;font-size:13px}
+.btn-ghost{border:1px solid var(--border);color:var(--dim)}
+.btn-pri{background:var(--accent);color:#111;font-weight:600}
+</style>
+</head>
+<body>
+
+<div id="sidebar">
+  <div class="brand">
+    <div class="logo">OC</div>
+    <div class="name">Open Claude</div>
+    <div class="tag">CODEX</div>
+  </div>
+  <button id="newtask">✚&nbsp; 新任务</button>
+  <div class="sec">任务</div>
+  <div id="tasklist"><div class="empty-side">还没有任务。<br>选择一个项目开始吧。</div></div>
+  <div id="sandboxnote">沙箱模式:智能体拥有完整工具(命令、读写、搜索),但只能操作 <b id="sbpath">sandbox/</b> 下的项目文件夹。</div>
+</div>
+
+<div id="main">
+
+  <!-- ======== home (new task) ======== -->
+  <div id="home">
+    <h1>接下来要做什么?</h1>
+    <div class="composer">
+      <textarea id="input" rows="2" placeholder="描述一个任务,例如:写一个贪吃蛇网页游戏…"></textarea>
+      <div class="crow">
+        <button class="cbtn" id="projbtn">📁 <span id="projlabel">选择项目</span> <span class="caret">▼</span></button>
+        <button class="cbtn" id="modelbtn">⚙ <span id="modellabel">模型</span> <span class="caret">▼</span></button>
+        <button class="cbtn" id="parambtn">⚗ 参数</button>
+        <button id="sendbtn" title="开始任务">↑</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======== task view ======== -->
+  <div id="taskview">
+    <div id="taskhead">
+      <span class="dot" id="headdot"></span>
+      <span class="title" id="headtitle"></span>
+      <span class="chip" id="headproj"></span>
+      <span class="spin" id="headspin"><span class="spinner"></span>正在工作…</span>
+    </div>
+    <div id="feed"><div class="feedcol" id="feedcol"></div></div>
+    <div id="taskcomposer">
+      <div class="composer">
+        <textarea id="input2" rows="1" placeholder="继续对这个任务下指令…"></textarea>
+        <div class="crow">
+          <button class="cbtn" id="modelbtn2">⚙ <span id="modellabel2">模型</span> <span class="caret">▼</span></button>
+          <button class="cbtn" id="parambtn2">⚗ 参数</button>
+          <button id="sendbtn2" title="发送">↑</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- popovers -->
+<div class="pop" id="pop-proj"></div>
+<div class="pop" id="pop-model"></div>
+<div class="pop" id="pop-param" style="min-width:270px">
+  <div class="head">推理参数(全局生效)</div>
+  <div class="prow"><label>最大输出 token</label><input type="number" id="p-maxtok" min="1" placeholder="默认"></div>
+  <div class="prow" id="p-temp-row"><label>温度</label>
+    <span style="display:flex;align-items:center;gap:7px"><input type="range" id="p-temp" min="0" max="2" step="0.1"><span class="val" id="p-temp-val">–</span></span></div>
+  <div class="prow"><label>扩展思考</label><span class="sw" id="p-think"></span></div>
+  <div class="prow" id="p-budget-row"><label>思考预算 token</label><input type="number" id="p-budget" min="1024" step="512"></div>
+</div>
+
+<!-- new project modal -->
+<div id="mask">
+  <div class="modal">
+    <h3>新建项目</h3>
+    <div class="hint">将在沙箱目录下创建一个新的项目文件夹。</div>
+    <input id="projname" placeholder="项目名(中英文、数字、- _ .)" maxlength="64">
+    <div class="err" id="projerr"></div>
+    <div class="btns">
+      <button class="btn-ghost" id="projcancel">取消</button>
+      <button class="btn-pri" id="projcreate">创建</button>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+
+let META = null;          // /api/meta
+let TASKS = [];           // task summaries
+let ACTIVE = null;        // active task summary (id, project, ...)
+let BUSY = false;
+let SELECTED_PROJECT = null;
+
+/* ---------------- tiny markdown ---------------- */
+function md(src){
+  const lines = String(src).split("\n");
+  let html = "", i = 0, para = [];
+  const inline = t => esc(t)
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+    .replace(/\*([^*]+)\*/g, "<i>$1</i>")
+    .replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  const flush = () => { if (para.length){ html += "<p>" + para.map(inline).join("<br>") + "</p>"; para = []; } };
+  while (i < lines.length){
+    const ln = lines[i];
+    if (/^```/.test(ln)){
+      flush();
+      let code = []; i++;
+      while (i < lines.length && !/^```/.test(lines[i])) code.push(lines[i++]);
+      i++;
+      html += "<pre><code>" + esc(code.join("\n")) + "</code></pre>";
+      continue;
+    }
+    const h = ln.match(/^(#{1,3})\s+(.*)/);
+    if (h){ flush(); const n = h[1].length; html += `<h${n}>` + inline(h[2]) + `</h${n}>`; i++; continue; }
+    if (/^\s*[-*]\s+/.test(ln)){
+      flush(); let items = [];
+      while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) items.push(lines[i++].replace(/^\s*[-*]\s+/, ""));
+      html += "<ul>" + items.map(x => "<li>" + inline(x) + "</li>").join("") + "</ul>";
+      continue;
+    }
+    if (/^\s*\d+\.\s+/.test(ln)){
+      flush(); let items = [];
+      while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) items.push(lines[i++].replace(/^\s*\d+\.\s+/, ""));
+      html += "<ol>" + items.map(x => "<li>" + inline(x) + "</li>").join("") + "</ol>";
+      continue;
+    }
+    if (ln.trim() === "") { flush(); i++; continue; }
+    para.push(ln); i++;
+  }
+  flush();
+  return html;
+}
+
+/* ---------------- api helpers ---------------- */
+async function api(path, opts){
+  const r = await fetch(path, opts);
+  return r.json();
+}
+async function loadMeta(){
+  META = await api("/api/meta");
+  $("sbpath").textContent = META.sandbox;
+  if (!SELECTED_PROJECT && META.projects.length) SELECTED_PROJECT = META.projects[0].name;
+  updateProjLabel(); updateModelLabels(); fillParamPanel();
+}
+async function loadTasks(){
+  const j = await api("/api/tasks");
+  TASKS = j.tasks || [];
+  renderTaskList();
+}
+
+/* ---------------- sidebar ---------------- */
+function relTime(ts){
+  const d = Date.now()/1000 - ts;
+  if (d < 60) return "刚刚";
+  if (d < 3600) return Math.floor(d/60) + " 分钟前";
+  if (d < 86400) return Math.floor(d/3600) + " 小时前";
+  return Math.floor(d/86400) + " 天前";
+}
+function renderTaskList(){
+  const box = $("tasklist");
+  if (!TASKS.length){
+    box.innerHTML = '<div class="empty-side">还没有任务。<br>选择一个项目开始吧。</div>';
+    return;
+  }
+  box.innerHTML = "";
+  for (const t of TASKS){
+    const row = document.createElement("div");
+    row.className = "task-row" + (ACTIVE && ACTIVE.id === t.id ? " active" : "");
+    row.innerHTML =
+      `<div class="t">${esc(t.title)}</div>` +
+      `<div class="m"><span class="dot ${t.status === "working" ? "working" : t.status === "error" ? "error" : ""}"></span>` +
+      `<span class="chip">${esc(t.project)}</span><span>${relTime(t.updated)}</span></div>`;
+    row.onclick = () => openTask(t.id);
+    box.appendChild(row);
+  }
+}
+
+/* ---------------- views ---------------- */
+function showHome(){
+  ACTIVE = null;
+  $("home").style.display = "flex";
+  $("taskview").style.display = "none";
+  renderTaskList();
+  $("input").focus();
+}
+async function openTask(id){
+  const t = await api("/api/tasks/" + id);
+  if (t.error) return;
+  ACTIVE = t;
+  $("home").style.display = "none";
+  $("taskview").style.display = "flex";
+  $("headtitle").textContent = t.title;
+  $("headproj").textContent = t.project;
+  setWorking(t.status === "working");
+  const col = $("feedcol");
+  col.innerHTML = "";
+  toolCards = {};
+  streamEl = null;
+  for (const ev of (t.log || [])) appendEvent(ev, col);
+  renderTaskList();
+  scrollFeed(true);
+  $("input2").focus();
+}
+function setWorking(on){
+  $("headspin").classList.toggle("on", on);
+  $("headdot").className = "dot" + (on ? " working" : "");
+  $("sendbtn2").disabled = on;
+}
+function scrollFeed(force){
+  const f = $("feed");
+  const near = f.scrollHeight - f.scrollTop - f.clientHeight < 160;
+  if (force || near) f.scrollTop = f.scrollHeight;
+}
+
+/* ---------------- event rendering (replay + live share this) ---------------- */
+let toolCards = {};   // tool_use_id -> {card, body, kind}
+let streamEl = null;  // live-streaming assistant text element
+let streamBuf = "";
+
+function toolMeta(name, input){
+  input = input || {};
+  const p = input.file_path || input.path || "";
+  switch (name){
+    case "Bash": return {ic:"❯", lbl:"运行命令", path:(input.command||"").slice(0,80), kind:"bash"};
+    case "Read": return {ic:"📄", lbl:"读取", path:p, kind:"plain"};
+    case "Write": return {ic:"✚", lbl:"创建文件", path:p, kind:"write"};
+    case "Edit": return {ic:"±", lbl:"编辑", path:p, kind:"edit"};
+    case "Glob": return {ic:"🔍", lbl:"查找文件", path:input.pattern||"", kind:"plain"};
+    case "Grep": return {ic:"🔍", lbl:"搜索", path:input.pattern||"", kind:"plain"};
+    case "Skill": return {ic:"✦", lbl:"技能 /" + (input.skill||""), path:input.args||"", kind:"plain"};
+    case "Agent": return {ic:"🤖", lbl:"子智能体", path:(input.description||""), kind:"plain"};
+    default: return {ic:"⚙", lbl:name, path:"", kind:"json"};
+  }
+}
+
+function diffHTML(oldS, newS){
+  let h = "";
+  if (oldS) for (const l of String(oldS).split("\n")) h += `<div class="ln del">- ${esc(l)}</div>`;
+  if (newS) for (const l of String(newS).split("\n")) h += `<div class="ln add">+ ${esc(l)}</div>`;
+  return h;
+}
+
+function appendEvent(ev, col){
+  col = col || $("feedcol");
+  if (ev.type === "user"){
+    closeStream();
+    const d = document.createElement("div");
+    d.className = "msg-user"; d.textContent = ev.text;
+    col.appendChild(d);
+  }
+  else if (ev.type === "assistant"){          // coalesced block from replay
+    closeStream();
+    const d = document.createElement("div");
+    d.className = "msg-asst"; d.innerHTML = md(ev.text);
+    col.appendChild(d);
+  }
+  else if (ev.type === "text"){                // live delta
+    if (!streamEl){
+      streamEl = document.createElement("div");
+      streamEl.className = "msg-asst"; streamBuf = "";
+      col.appendChild(streamEl);
+    }
+    streamBuf += ev.text;
+    streamEl.innerHTML = md(streamBuf);
+  }
+  else if (ev.type === "thinking"){
+    let el = col.lastElementChild;
+    if (!el || !el.classList.contains("think")){
+      el = document.createElement("div");
+      el.className = "think"; el.dataset.buf = "";
+      el.onclick = () => el.classList.toggle("open");
+      closeStream(); col.appendChild(el);
+    }
+    el.dataset.buf += ev.text;
+    el.textContent = el.dataset.buf;
+  }
+  else if (ev.type === "tool_use"){
+    closeStream();
+    const m = toolMeta(ev.name, ev.input);
+    const card = document.createElement("div");
+    card.className = "tool";
+    card.innerHTML =
+      `<div class="thead"><span class="ic">${m.ic}</span><span class="lbl">${esc(m.lbl)}</span>` +
+      `<span class="path">${esc(m.path)}</span><span class="st run">●</span></div>` +
+      `<div class="tbody"></div>`;
+    const body = card.querySelector(".tbody");
+    card.querySelector(".thead").onclick = () => card.classList.toggle("open");
+    const inp = ev.input || {};
+    if (m.kind === "bash"){
+      body.innerHTML = `<div class="term"><span class="cmd">$ ${esc(inp.command||"")}</span>\n<span class="out"></span></div>`;
+      card.classList.add("open");
+    } else if (m.kind === "edit"){
+      body.innerHTML = `<div class="diff">${diffHTML(inp.old_string, inp.new_string)}</div><div class="term" style="display:none"><span class="out"></span></div>`;
+      card.classList.add("open");
+    } else if (m.kind === "write"){
+      body.innerHTML = `<div class="diff">${diffHTML("", inp.content)}</div><div class="term" style="display:none"><span class="out"></span></div>`;
+      card.classList.add("open");
+    } else if (m.kind === "json"){
+      body.innerHTML = `<div class="term"><span class="cmd">${esc(JSON.stringify(inp, null, 2))}</span>\n<span class="out"></span></div>`;
+    } else {
+      body.innerHTML = `<div class="term"><span class="out"></span></div>`;
+    }
+    col.appendChild(card);
+    if (ev.id) toolCards[ev.id] = card;
+  }
+  else if (ev.type === "tool_result"){
+    const card = toolCards[ev.tool_use_id];
+    if (card){
+      const st = card.querySelector(".st");
+      st.className = "st " + (ev.is_error ? "err" : "ok");
+      st.textContent = ev.is_error ? "失败" : "完成";
+      const out = card.querySelector(".out");
+      if (out){
+        const text = ev.content || "";
+        out.textContent = text.length > 6000 ? text.slice(0, 6000) + "\n… (已截断)" : text;
+        if (ev.is_error){ out.className = "errout"; out.parentElement.style.display = ""; card.classList.add("open"); }
+      }
+    }
+  }
+  else if (ev.type === "error"){
+    closeStream();
+    const d = document.createElement("div");
+    d.className = "msg-err"; d.textContent = ev.error;
+    col.appendChild(d);
+  }
+  scrollFeed(false);
+}
+function closeStream(){
+  if (streamEl){ streamEl.innerHTML = md(streamBuf); streamEl = null; streamBuf = ""; }
+}
+
+/* ---------------- sending ---------------- */
+async function startTask(){
+  const text = $("input").value.trim();
+  if (!text || BUSY) return;
+  if (!SELECTED_PROJECT){ openProjPop(); return; }
+  const t = await api("/api/tasks", {method:"POST", headers:{"Content-Type":"application/json"},
+                                     body: JSON.stringify({project: SELECTED_PROJECT})});
+  if (t.error){ alert(t.error); return; }
+  TASKS.unshift(t);
+  ACTIVE = t;
+  $("input").value = "";
+  $("home").style.display = "none";
+  $("taskview").style.display = "flex";
+  $("headtitle").textContent = text.slice(0, 48);
+  $("headproj").textContent = t.project;
+  $("feedcol").innerHTML = "";
+  toolCards = {}; streamEl = null;
+  renderTaskList();
+  await sendToActive(text);
+}
+async function sendFollowup(){
+  const text = $("input2").value.trim();
+  if (!text || BUSY || !ACTIVE) return;
+  $("input2").value = "";
+  autosize($("input2"));
+  await sendToActive(text);
+}
+async function sendToActive(text){
+  BUSY = true; setWorking(true);
+  appendEvent({type:"user", text});
+  scrollFeed(true);
+  try{
+    const r = await fetch(`/api/tasks/${ACTIVE.id}/send`, {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({message: text}),
+    });
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    while (true){
+      const {done, value} = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, {stream:true});
+      let idx;
+      while ((idx = buf.indexOf("\n\n")) >= 0){
+        const chunk = buf.slice(0, idx); buf = buf.slice(idx + 2);
+        for (const line of chunk.split("\n")){
+          if (!line.startsWith("data: ")) continue;
+          let ev; try{ ev = JSON.parse(line.slice(6)); }catch(e){ continue; }
+          if (ev.type === "done"){
+            closeStream();
+            if (ev.cost > 0){
+              const n = document.createElement("div");
+              n.className = "done-note";
+              n.textContent = `本轮完成 · ${ev.model} · 累计 $${ev.cost}`;
+              $("feedcol").appendChild(n);
+            }
+          } else {
+            appendEvent(ev);
+          }
+        }
+      }
+    }
+  }catch(e){
+    appendEvent({type:"error", error:"连接中断: " + e.message});
+  }finally{
+    closeStream();
+    BUSY = false; setWorking(false);
+    if (ACTIVE){
+      const t = TASKS.find(x => x.id === ACTIVE.id);
+      if (t){ t.title = $("headtitle").textContent; t.updated = Date.now()/1000; t.status = "idle"; }
+    }
+    renderTaskList();
+    scrollFeed(false);
+  }
+}
+
+/* ---------------- popovers ---------------- */
+function placePop(pop, anchor){
+  const r = anchor.getBoundingClientRect();
+  pop.classList.add("open");
+  const h = pop.offsetHeight, w = pop.offsetWidth;
+  let top = r.top - h - 8;
+  if (top < 8) top = r.bottom + 8;
+  let left = Math.min(r.left, window.innerWidth - w - 10);
+  pop.style.top = top + "px"; pop.style.left = Math.max(8, left) + "px";
+}
+function closePops(){ document.querySelectorAll(".pop").forEach(p => p.classList.remove("open")); }
+document.addEventListener("click", e => {
+  if (!e.target.closest(".pop") && !e.target.closest(".cbtn")) closePops();
+});
+
+function updateProjLabel(){ $("projlabel").textContent = SELECTED_PROJECT || "选择项目"; }
+function openProjPop(){
+  const pop = $("pop-proj");
+  let h = '<div class="head">沙箱内的项目</div>';
+  for (const p of (META.projects || [])){
+    h += `<div class="item" data-p="${esc(p.name)}"><span class="chk">${p.name === SELECTED_PROJECT ? "✓" : ""}</span>${esc(p.name)}</div>`;
+  }
+  if (!(META.projects || []).length) h += '<div class="item" style="color:var(--dimmer);cursor:default">(空)</div>';
+  h += '<div class="sep"></div><div class="item" id="mkproj"><span class="chk"></span>✚ 新建项目…</div>';
+  pop.innerHTML = h;
+  pop.querySelectorAll(".item[data-p]").forEach(el => el.onclick = () => {
+    SELECTED_PROJECT = el.dataset.p; updateProjLabel(); closePops();
+  });
+  const mk = pop.querySelector("#mkproj");
+  if (mk) mk.onclick = () => { closePops(); openProjModal(); };
+  placePop(pop, $("projbtn"));
+}
+
+function updateModelLabels(){
+  const cur = (META.models || []).find(m => m.id === META.model);
+  const label = cur ? cur.label : META.model;
+  $("modellabel").textContent = label;
+  $("modellabel2").textContent = label;
+}
+function openModelPop(anchor){
+  const pop = $("pop-model");
+  let h = '<div class="head">模型</div>';
+  for (const m of (META.models || [])){
+    h += `<div class="item" data-m="${esc(m.id)}"><span class="chk">${m.id === META.model ? "✓" : ""}</span>${esc(m.label)}</div>`;
+  }
+  pop.innerHTML = h;
+  pop.querySelectorAll(".item[data-m]").forEach(el => el.onclick = async () => {
+    const j = await api("/api/model", {method:"POST", headers:{"Content-Type":"application/json"},
+                                       body: JSON.stringify({model: el.dataset.m})});
+    if (j.model) META.model = j.model;
+    updateModelLabels(); closePops();
+  });
+  placePop(pop, anchor);
+}
+
+/* params */
+function fillParamPanel(){
+  const p = META.params || {};
+  $("p-maxtok").value = p.max_tokens == null ? "" : p.max_tokens;
+  $("p-maxtok").placeholder = "默认 " + (p.default_max_tokens || "");
+  $("p-temp").value = p.temperature == null ? 1 : p.temperature;
+  $("p-temp-val").textContent = p.temperature == null ? "默认" : p.temperature;
+  $("p-think").classList.toggle("on", !!p.thinking);
+  $("p-budget").value = p.thinking_budget || 8000;
+  syncThink();
+}
+function syncThink(){
+  const on = $("p-think").classList.contains("on");
+  $("p-temp-row").classList.toggle("off", on);
+  $("p-budget-row").classList.toggle("off", !on);
+}
+async function saveParams(patch){
+  const j = await api("/api/params", {method:"POST", headers:{"Content-Type":"application/json"},
+                                      body: JSON.stringify(patch)});
+  if (j && !j.error) META.params = j;
+}
+$("p-maxtok").onchange = e => saveParams({max_tokens: e.target.value});
+$("p-temp").oninput = e => { $("p-temp-val").textContent = e.target.value; };
+$("p-temp").onchange = e => saveParams({temperature: parseFloat(e.target.value)});
+$("p-think").onclick = () => {
+  const el = $("p-think"); el.classList.toggle("on");
+  syncThink(); saveParams({thinking: el.classList.contains("on")});
+};
+$("p-budget").onchange = e => saveParams({thinking_budget: e.target.value});
+
+/* ---------------- new-project modal ---------------- */
+function openProjModal(){
+  $("projerr").textContent = "";
+  $("projname").value = "";
+  $("mask").classList.add("open");
+  $("projname").focus();
+}
+$("projcancel").onclick = () => $("mask").classList.remove("open");
+$("projcreate").onclick = async () => {
+  const name = $("projname").value.trim();
+  const j = await api("/api/projects", {method:"POST", headers:{"Content-Type":"application/json"},
+                                        body: JSON.stringify({name})});
+  if (j.error){ $("projerr").textContent = j.error; return; }
+  META.projects = j.projects;
+  SELECTED_PROJECT = j.name;
+  updateProjLabel();
+  $("mask").classList.remove("open");
+};
+$("projname").addEventListener("keydown", e => { if (e.key === "Enter") $("projcreate").click(); });
+$("mask").addEventListener("click", e => { if (e.target === $("mask")) $("mask").classList.remove("open"); });
+
+/* ---------------- wiring ---------------- */
+function autosize(el){
+  el.style.height = "auto";
+  el.style.height = Math.min(el.scrollHeight, 220) + "px";
+}
+for (const id of ["input", "input2"]){
+  const el = $(id);
+  el.addEventListener("input", () => autosize(el));
+  el.addEventListener("keydown", e => {
+    if (e.key === "Enter" && !e.shiftKey){
+      e.preventDefault();
+      id === "input" ? startTask() : sendFollowup();
+    }
+  });
+}
+$("sendbtn").onclick = startTask;
+$("sendbtn2").onclick = sendFollowup;
+$("newtask").onclick = showHome;
+$("projbtn").onclick = e => { e.stopPropagation(); closePops(); openProjPop(); };
+$("modelbtn").onclick = e => { e.stopPropagation(); closePops(); openModelPop($("modelbtn")); };
+$("modelbtn2").onclick = e => { e.stopPropagation(); closePops(); openModelPop($("modelbtn2")); };
+$("parambtn").onclick = e => { e.stopPropagation(); closePops(); fillParamPanel(); placePop($("pop-param"), $("parambtn")); };
+$("parambtn2").onclick = e => { e.stopPropagation(); closePops(); fillParamPanel(); placePop($("pop-param"), $("parambtn2")); };
+
+(async function init(){
+  await loadMeta();
+  await loadTasks();
+  showHome();
+  setInterval(async () => { if (!BUSY) { await loadTasks(); } }, 20000);
+})();
+</script>
+</body>
+</html>

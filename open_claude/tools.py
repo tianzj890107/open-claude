@@ -586,6 +586,84 @@ def get_base_tool_schemas() -> list[dict[str, Any]]:
 _READONLY_BLOCKED_TOOLS = {"Write", "Edit", "Bash"}
 
 
+# ---------------------------------------------------------------------------
+# Sandbox confinement (OC_SANDBOX_ROOT)
+#
+# When OC_SANDBOX_ROOT is set (e.g. by the codex-style web server), every tool
+# dispatched through execute_tool is confined to that directory tree. File
+# tools get their path arguments resolved and checked; Bash commands are
+# screened for the common escape vectors (absolute paths outside the sandbox,
+# `..` traversal, `~` home expansion). The Bash screen is best-effort — the
+# hard guarantee applies to the file tools; shell commands always execute with
+# their cwd inside the sandbox. The CLI never sets this variable.
+# ---------------------------------------------------------------------------
+
+_SANDBOX_PATH_KEYS = {
+    "Read": ("file_path",),
+    "Write": ("file_path",),
+    "Edit": ("file_path",),
+    "Glob": ("path",),
+    "Grep": ("path",),
+}
+
+# Windows drive-letter absolute paths appearing anywhere in a shell command.
+_WIN_ABS_RE = re.compile(r"(?<![\w])([A-Za-z]:[\\/][^\s\"'`;|&<>]*)")
+# Git-bash style /c/... drive paths.
+_POSIX_DRIVE_RE = re.compile(r"(?:^|[\s\"'`=(;|&])(/([A-Za-z])/[^\s\"'`;|&<>]*)")
+# A standalone `..` path component (bounded so `main..HEAD` etc. still pass).
+_DOTDOT_RE = re.compile(r"(?:^|[\s\"'`=(;|&:])\.\.(?:$|[\s\"'`\\/);|&])")
+# A `~` used as a path (home-dir escape).
+_HOME_RE = re.compile(r"(?:^|[\s\"'`=(;|&:])~(?:$|[/\\\s\"'`;)|&])")
+
+
+def _sandbox_root() -> Optional[str]:
+    root = os.environ.get("OC_SANDBOX_ROOT")
+    if not root:
+        return None
+    return os.path.normcase(os.path.realpath(root))
+
+
+def _in_sandbox(path: str, root: str) -> bool:
+    real = os.path.normcase(os.path.realpath(path))
+    return real == root or real.startswith(root + os.sep)
+
+
+def _sandbox_violation(name: str, params: dict[str, Any], cwd: str, root: str) -> Optional[str]:
+    """Return an error message if this tool call would leave the sandbox."""
+    if name in _SANDBOX_PATH_KEYS:
+        candidates = [params.get(k) for k in _SANDBOX_PATH_KEYS[name]]
+        # An absolute Glob pattern bypasses the `path` arg — check it as a path.
+        if name == "Glob" and os.path.isabs(params.get("pattern", "")):
+            candidates.append(params.get("pattern"))
+        for raw in candidates:
+            if not raw:
+                continue
+            p = raw if os.path.isabs(raw) else os.path.join(cwd, raw)
+            if not _in_sandbox(p, root):
+                return (
+                    f"Error: path '{raw}' is outside the sandbox. "
+                    f"This session can only access files under: {root}"
+                )
+    elif name == "Bash":
+        cmd = params.get("command", "")
+        if _DOTDOT_RE.search(cmd):
+            return ("Error: '..' path traversal is not allowed in this sandboxed session. "
+                    f"Work with paths under: {root}")
+        if _HOME_RE.search(cmd):
+            return ("Error: '~' (home directory) paths are not allowed in this sandboxed session. "
+                    f"Work with paths under: {root}")
+        for m in _WIN_ABS_RE.finditer(cmd):
+            if not _in_sandbox(m.group(1), root):
+                return (f"Error: absolute path '{m.group(1)}' is outside the sandbox. "
+                        f"This session can only access files under: {root}")
+        for m in _POSIX_DRIVE_RE.finditer(cmd):
+            translated = m.group(2) + ":" + m.group(1)[2:]
+            if not _in_sandbox(translated, root):
+                return (f"Error: absolute path '{m.group(1)}' is outside the sandbox. "
+                        f"This session can only access files under: {root}")
+    return None
+
+
 def execute_tool(name: str, params: dict[str, Any], cwd: str) -> str:
     """Execute a tool by name with given params."""
     if os.environ.get("OC_READONLY_FS") and name in _READONLY_BLOCKED_TOOLS:
@@ -593,6 +671,11 @@ def execute_tool(name: str, params: dict[str, Any], cwd: str) -> str:
             f"Error: '{name}' is disabled in this read-only session. "
             "The filesystem cannot be modified and shell commands cannot be run here."
         )
+    root = _sandbox_root()
+    if root:
+        violation = _sandbox_violation(name, params, cwd, root)
+        if violation:
+            return violation
     executor = TOOL_EXECUTORS.get(name)
     if not executor:
         return f"Unknown tool: {name}"
