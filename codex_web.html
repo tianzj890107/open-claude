@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Open Claude — Codex</title>
+<title>硕磐智能 — 本体智能体</title>
 <style>
 :root{
   --bg:#0f0f10; --panel:#161618; --panel2:#1d1d20; --border:#2a2a2e;
@@ -109,6 +109,27 @@ input,textarea,select{font-family:inherit;color:inherit}
 .msg-asst a{color:#79b8ff}
 .msg-err{color:var(--red);background:rgba(248,81,73,.08);border:1px solid rgba(248,81,73,.35);border-radius:9px;padding:9px 13px;font-size:13px}
 
+/* 危险操作确认卡片 */
+.appr{border:1px solid rgba(210,153,34,.55);border-radius:10px;background:rgba(210,153,34,.07);padding:11px 14px}
+.appr.done{border-color:var(--border);background:var(--panel)}
+.appr .ahead{font-size:13px;color:var(--amber);font-weight:600}
+.appr.done .ahead{color:var(--dim)}
+.appr .adetail{font-family:var(--mono);font-size:12px;background:#141416;border:1px solid var(--border);border-radius:8px;padding:8px 11px;margin:8px 0 0;white-space:pre-wrap;max-height:180px;overflow:auto;color:#c8c8cf}
+.appr .abtns{display:flex;gap:8px;margin-top:10px;align-items:center}
+.appr .abtns button{border:1px solid var(--border);border-radius:7px;padding:5px 16px;font-size:12.5px}
+.appr .abtns .aok{background:var(--green);color:#fff;border-color:transparent;font-weight:600}
+.appr .abtns .ano{color:var(--dim)}
+.appr .abtns button:hover{filter:brightness(1.15)}
+.appr .abtns button:disabled{opacity:.4;cursor:default}
+.appr .ast{font-size:12px;color:var(--dimmer)}
+.ares{font-size:12.5px;font-weight:600}
+.ares.yes{color:var(--green)}
+.ares.no{color:var(--red)}
+
+/* 对话中的文件名链接 -> 右侧预览 */
+.filelink{color:#79b8ff;cursor:pointer;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px}
+.filelink:hover{color:#a5d0ff;text-decoration-style:solid}
+
 /* thinking */
 .think{border-left:2px solid var(--border);padding:2px 0 2px 12px;color:var(--dimmer);font-size:12.5px;white-space:pre-wrap;max-height:72px;overflow:hidden;cursor:pointer}
 .think.open{max-height:none}
@@ -155,6 +176,13 @@ input,textarea,select{font-family:inherit;color:inherit}
 #pvbody{flex:1;overflow:auto;min-height:0;display:flex;flex-direction:column}
 .pv-code{font-family:var(--mono);font-size:12px;line-height:1.55;padding:12px 14px;white-space:pre;color:#c8c8cf}
 .pv-code .no{color:var(--dimmer);user-select:none;display:inline-block;width:3.2em;text-align:right;margin-right:12px}
+.pv-table-wrap{padding:12px 14px;overflow:auto}
+.pv-table{border-collapse:collapse;font-size:12.5px;font-family:var(--mono);white-space:nowrap}
+.pv-table th,.pv-table td{border:1px solid var(--border);padding:5px 10px;text-align:left;max-width:360px;overflow:hidden;text-overflow:ellipsis}
+.pv-table th{background:var(--panel2);color:var(--text);font-weight:600;position:sticky;top:0}
+.pv-table td{color:#c8c8cf}
+.pv-table tr:nth-child(even) td{background:rgba(255,255,255,0.02)}
+.pv-table-note{color:var(--dimmer);font-size:11.5px;padding:6px 2px}
 .pv-md{padding:16px 20px}
 #pvbody iframe{width:100%;flex:1;border:none;background:#fff}
 #pvbody img{max-width:92%;display:block;margin:20px auto}
@@ -186,9 +214,9 @@ input,textarea,select{font-family:inherit;color:inherit}
 
 <div id="sidebar">
   <div class="brand">
-    <div class="logo">OC</div>
-    <div class="name">Open Claude</div>
-    <div class="tag">CODEX</div>
+    <div class="logo">硕</div>
+    <div class="name">硕磐智能</div>
+    <div class="tag">本体智能体</div>
   </div>
   <button id="newtask">✚&nbsp; 新任务</button>
   <div class="sec">任务</div>
@@ -207,6 +235,7 @@ input,textarea,select{font-family:inherit;color:inherit}
       <div class="crow">
         <button class="cbtn" id="attach1" title="上传文件到项目">📎</button>
         <button class="cbtn" id="projbtn">📁 <span id="projlabel">选择项目</span> <span class="caret">▼</span></button>
+        <button class="cbtn" id="filesbtn0" title="浏览项目文件">📂 文件</button>
         <button class="cbtn" id="modelbtn">⚙ <span id="modellabel">模型</span> <span class="caret">▼</span></button>
         <button class="cbtn" id="parambtn">⚗ 参数</button>
         <button id="sendbtn" title="开始任务">↑</button>
@@ -397,7 +426,7 @@ async function openTask(id){
   setWorking(t.status === "working");
   const col = $("feedcol");
   col.innerHTML = "";
-  toolCards = {};
+  toolCards = {}; approvalCards = {};
   streamEl = null;
   for (const ev of (t.log || [])) appendEvent(ev, col);
   renderTaskList();
@@ -417,8 +446,9 @@ function scrollFeed(force){
 }
 
 /* ---------------- event rendering (replay + live share this) ---------------- */
-let toolCards = {};   // tool_use_id -> {card, body, kind}
-let streamEl = null;  // live-streaming assistant text element
+let toolCards = {};       // tool_use_id -> {card, body, kind}
+let approvalCards = {};   // approval id -> card element
+let streamEl = null;      // live-streaming assistant text element
 let streamBuf = "";
 
 function toolMeta(name, input){
@@ -444,6 +474,51 @@ function diffHTML(oldS, newS){
   return h;
 }
 
+/* 把消息里出现的文件名(如 数据.csv)变成可点击链接,点击后在右侧预览 */
+const FILE_REF_RE = /(?:[\w\-.一-鿿()]+[\/\\])*[\w\-.一-鿿()]+\.(?:csv|tsv|xlsx?|docx?|pdf|md|html?|json|txt|py|js|ts|sql|ya?ml|xml|log|png|jpe?g|gif|svg|webp)\b/gi;
+function normalizeFileRef(p){
+  p = String(p).replace(/\\/g, "/");
+  const proj = pvProject();
+  if (proj){
+    const key = "sandbox/" + proj + "/";
+    const i = p.indexOf(key);
+    if (i >= 0) return p.slice(i + key.length);   // 绝对路径/带 sandbox 前缀 -> 项目内相对路径
+  }
+  return p;
+}
+function linkifyFiles(root){
+  if (!root) return;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(n){
+      return n.parentElement && n.parentElement.closest("a,.filelink")
+        ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
+    }
+  });
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  for (const node of nodes){
+    const text = node.nodeValue;
+    FILE_REF_RE.lastIndex = 0;
+    if (!FILE_REF_RE.test(text)) continue;
+    FILE_REF_RE.lastIndex = 0;
+    const frag = document.createDocumentFragment();
+    let last = 0, m;
+    while ((m = FILE_REF_RE.exec(text))){
+      frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+      const s = document.createElement("span");
+      s.className = "filelink";
+      s.textContent = m[0];
+      s.title = "在右侧预览";
+      const ref = m[0];
+      s.onclick = e => { e.stopPropagation(); openFile(normalizeFileRef(ref)); };
+      frag.appendChild(s);
+      last = m.index + m[0].length;
+    }
+    frag.appendChild(document.createTextNode(text.slice(last)));
+    node.parentNode.replaceChild(frag, node);
+  }
+}
+
 function appendEvent(ev, col){
   col = col || $("feedcol");
   if (ev.type === "user"){
@@ -456,6 +531,7 @@ function appendEvent(ev, col){
     closeStream();
     const d = document.createElement("div");
     d.className = "msg-asst"; d.innerHTML = md(ev.text);
+    linkifyFiles(d);
     col.appendChild(d);
   }
   else if (ev.type === "text"){                // live delta
@@ -492,6 +568,7 @@ function appendEvent(ev, col){
     const inp = ev.input || {};
     if (m.kind === "bash"){
       body.innerHTML = `<div class="term"><span class="cmd">$ ${esc(inp.command||"")}</span>\n<span class="out"></span></div>`;
+      linkifyFiles(body.querySelector(".cmd"));
       card.classList.add("open");
     } else if (m.kind === "edit"){
       body.innerHTML = `<div class="diff">${diffHTML(inp.old_string, inp.new_string)}</div><div class="term" style="display:none"><span class="out"></span></div>`;
@@ -523,8 +600,47 @@ function appendEvent(ev, col){
       if (out){
         const text = ev.content || "";
         out.textContent = text.length > 6000 ? text.slice(0, 6000) + "\n… (已截断)" : text;
+        linkifyFiles(out);
         if (ev.is_error){ out.className = "errout"; out.parentElement.style.display = ""; card.classList.add("open"); }
       }
+    }
+  }
+  else if (ev.type === "approval_request"){
+    closeStream();
+    const card = document.createElement("div");
+    card.className = "appr";
+    card.innerHTML =
+      `<div class="ahead">⚠ 需要确认:${esc(ev.summary || ev.tool)}</div>` +
+      (ev.detail ? `<pre class="adetail">${esc(ev.detail)}</pre>` : "") +
+      `<div class="abtns"><button class="aok">允许执行</button><button class="ano">拒绝</button><span class="ast"></span></div>`;
+    const st = card.querySelector(".ast");
+    const send = async (approved) => {
+      card.querySelectorAll("button").forEach(b => b.disabled = true);
+      st.textContent = "已提交…";
+      try{
+        const j = await api(`/api/tasks/${ACTIVE.id}/approve`, {method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({id: ev.id, approved})});
+        if (j.error){ st.textContent = j.error; card.querySelectorAll("button").forEach(b => b.disabled = false); }
+      }catch(e){
+        st.textContent = "提交失败,请重试";
+        card.querySelectorAll("button").forEach(b => b.disabled = false);
+      }
+    };
+    card.querySelector(".aok").onclick = () => send(true);
+    card.querySelector(".ano").onclick = () => send(false);
+    approvalCards[ev.id] = card;
+    col.appendChild(card);
+    scrollFeed(true);
+  }
+  else if (ev.type === "approval_result"){
+    const card = approvalCards[ev.id];
+    if (card){
+      const btns = card.querySelector(".abtns");
+      if (btns) btns.innerHTML = ev.approved
+        ? '<span class="ares yes">✓ 已允许,继续执行</span>'
+        : `<span class="ares no">✕ ${ev.timeout ? "确认超时,已跳过该操作" : "已拒绝该操作"}</span>`;
+      card.classList.add("done");
     }
   }
   else if (ev.type === "error"){
@@ -536,7 +652,7 @@ function appendEvent(ev, col){
   scrollFeed(false);
 }
 function closeStream(){
-  if (streamEl){ streamEl.innerHTML = md(streamBuf); streamEl = null; streamBuf = ""; }
+  if (streamEl){ streamEl.innerHTML = md(streamBuf); linkifyFiles(streamEl); streamEl = null; streamBuf = ""; }
 }
 
 /* ---------------- sending ---------------- */
@@ -555,7 +671,7 @@ async function startTask(){
   $("headtitle").textContent = text.slice(0, 48);
   $("headproj").textContent = t.project;
   $("feedcol").innerHTML = "";
-  toolCards = {}; streamEl = null;
+  toolCards = {}; approvalCards = {}; streamEl = null;
   renderTaskList();
   let msg = text;
   if (PENDING_FILES.length){
@@ -623,7 +739,18 @@ async function sendToActive(text){
     }
     renderTaskList();
     scrollFeed(false);
-    if (previewOpen() && PV.mode === "tree") showTree();  // pick up new files
+    if (previewOpen()){
+      if (PV.mode === "tree") showTree();                 // pick up new files
+    } else {
+      // 任务完成后若项目里已有产出文件,自动打开右侧文件区
+      const proj = pvProject();
+      if (proj){
+        try{
+          const j = await api("/api/files?project=" + encodeURIComponent(proj));
+          if ((j.files || []).length) showTree();
+        }catch(e){}
+      }
+    }
   }
 }
 
@@ -654,6 +781,7 @@ function openProjPop(){
   pop.innerHTML = h;
   pop.querySelectorAll(".item[data-p]").forEach(el => el.onclick = () => {
     SELECTED_PROJECT = el.dataset.p; updateProjLabel(); closePops();
+    if (!ACTIVE) showTree();   // 首页选定项目后立即在右侧展示其文件
   });
   const mk = pop.querySelector("#mkproj");
   if (mk) mk.onclick = () => { closePops(); openProjModal(); };
@@ -792,6 +920,40 @@ function fileURL(proj, rel){
          String(rel).replace(/\\/g, "/").split("/").map(encodeURIComponent).join("/");
 }
 
+/* CSV/TSV -> 表格预览(支持引号包裹字段) */
+function parseCSV(text, sep){
+  const rows = []; let row = [], cur = "", inQ = false;
+  for (let i = 0; i < text.length; i++){
+    const c = text[i];
+    if (inQ){
+      if (c === '"'){ if (text[i+1] === '"'){ cur += '"'; i++; } else inQ = false; }
+      else cur += c;
+    }
+    else if (c === '"') inQ = true;
+    else if (c === sep){ row.push(cur); cur = ""; }
+    else if (c === "\n"){ row.push(cur); rows.push(row); row = []; cur = ""; }
+    else if (c !== "\r") cur += c;
+  }
+  if (cur !== "" || row.length){ row.push(cur); rows.push(row); }
+  return rows;
+}
+function csvTableHTML(text, sep){
+  const MAX_ROWS = 500;
+  const rows = parseCSV(text, sep).filter(r => r.length > 1 || (r[0] || "").trim() !== "");
+  if (!rows.length) return '<div class="pv-empty">空文件</div>';
+  const head = rows[0], body = rows.slice(1, 1 + MAX_ROWS);
+  let h = '<div class="pv-table-wrap"><table class="pv-table"><thead><tr>';
+  h += head.map(c => `<th>${esc(c)}</th>`).join("") + "</tr></thead><tbody>";
+  for (const r of body){
+    h += "<tr>" + head.map((_, i) => `<td>${esc(r[i] == null ? "" : r[i])}</td>`).join("") + "</tr>";
+  }
+  h += "</tbody></table>";
+  const total = rows.length - 1;
+  h += `<div class="pv-table-note">${total} 行 × ${head.length} 列` +
+       (total > MAX_ROWS ? ` · 仅显示前 ${MAX_ROWS} 行(点「源码」看全文)` : "") + "</div></div>";
+  return h;
+}
+
 async function showTree(){
   const proj = pvProject();
   if (!proj) return;
@@ -840,7 +1002,7 @@ async function openFile(rel){
   const url = fileURL(proj, rel);
   const ext = extOf(rel);
   const body = $("pvbody");
-  const canSrc = ext === "html" || ext === "htm" || ext === "md";
+  const canSrc = ext === "html" || ext === "htm" || ext === "md" || ext === "csv" || ext === "tsv";
   $("pvsrc").style.display = canSrc ? "" : "none";
   $("pvsrc").textContent = PV.showSrc ? "预览" : "源码";
   const openable = ext === "html" || ext === "htm" || ext === "pdf" || IMG_EXT.has(ext);
@@ -865,11 +1027,19 @@ async function openFile(rel){
   let text;
   try{ text = new TextDecoder("utf-8", {fatal:true}).decode(buf); }
   catch(e){
-    body.innerHTML = `<div class="pv-empty">二进制文件(${fmtSize(buf.byteLength)}),无法预览。</div>`;
-    return;
+    try{ text = new TextDecoder("gbk", {fatal:true}).decode(buf); }   // 中文 Windows 常见编码
+    catch(e2){
+      body.innerHTML = `<div class="pv-empty">二进制文件(${fmtSize(buf.byteLength)}),无法预览。</div>`;
+      return;
+    }
   }
+  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);            // strip BOM
   if (ext === "md" && !PV.showSrc){
     body.innerHTML = `<div class="pv-md msg-asst">${md(text)}</div>`;
+    return;
+  }
+  if ((ext === "csv" || ext === "tsv") && !PV.showSrc){
+    body.innerHTML = csvTableHTML(text, ext === "tsv" ? "\t" : ",");
     return;
   }
   const lines = text.split("\n");
@@ -880,10 +1050,13 @@ $("pvclose").onclick = closePreview;
 $("pvback").onclick = showTree;
 $("pvrefresh").onclick = () => { PV.mode === "tree" ? showTree() : openFile(PV.file); };
 $("pvsrc").onclick = () => { PV.showSrc = !PV.showSrc; openFile(PV.file); };
-$("filesbtn").onclick = () => {
+function toggleFiles(){
   if (previewOpen() && PV.mode === "tree") closePreview();
+  else if (!pvProject()) openProjPop();   // 还没选项目 -> 先让用户选
   else showTree();
-};
+}
+$("filesbtn").onclick = toggleFiles;
+$("filesbtn0").onclick = toggleFiles;
 
 /* ---------------- wiring ---------------- */
 function autosize(el){

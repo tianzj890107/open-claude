@@ -3,6 +3,7 @@
 import json
 import os
 import platform
+import re
 from pathlib import Path
 from typing import Any, Optional
 
@@ -183,6 +184,11 @@ def get_api_key_for(provider: str) -> Optional[str]:
     keys = cfg.get("api_keys", {})
     if isinstance(keys, dict) and keys.get(provider):
         return keys[provider]
+    # 兼容顶层扁平写法:直接用环境变量名的小写形式作 key(如 dashscope_api_key)
+    for env in spec.get("env", []):
+        val = cfg.get(env.lower())
+        if val:
+            return val
     if provider == "anthropic" and cfg.get("api_key"):
         return cfg["api_key"]
     return None
@@ -196,7 +202,16 @@ def resolve_model(name: Optional[str]) -> Optional[str]:
     """
     if not name:
         return name
-    return _MODEL_ALIASES.get(name.strip().lower(), name.strip())
+    name = name.strip()
+    # Claude Code settings may append a context-window marker (e.g.
+    # "claude-fable-5[1m]") that the raw API rejects — strip it.
+    name = re.sub(r"\[[^\]]*\]$", "", name).strip()
+    resolved = _MODEL_ALIASES.get(name.lower(), name)
+    # Fable-tier ids are Claude Code-session models, not served to this API
+    # key — never call them here; fall back to the default model instead.
+    if resolved.lower().startswith("claude-fable"):
+        return DEFAULT_MODEL
+    return resolved
 
 
 def get_model() -> str:
@@ -211,7 +226,7 @@ def get_max_tokens() -> int:
     val = os.environ.get("CLAUDE_MAX_TOKENS")
     if val:
         return int(val)
-    return 16384
+    return 32768
 
 
 def get_environment_info() -> dict[str, str]:

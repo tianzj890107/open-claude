@@ -38,6 +38,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
 
 from open_claude.repl import Conversation
+from open_claude.profile import AgentProfile
 from open_claude.api import stream_message
 from open_claude.config import (
     AVAILABLE_MODELS,
@@ -166,15 +167,77 @@ class Task:
         self.log: list[dict] = []     # replayable UI events
         self.lock = threading.Lock()
 
+        # 网页确认流:危险操作暂停执行,推送 approval_request 事件,等待用户点击
+        self.pending_approval: dict | None = None
+        self._approval_event: threading.Event | None = None
+        self._approval_answer = False
+        self._rec = None              # 当前回合的 record+emit,供确认流推送事件
+
         # Full-capability agent, confined to the project dir by OC_SANDBOX_ROOT.
-        # always_allow: the web UI has no terminal for permission prompts.
-        self.conv = Conversation(cwd, permission_mode="always_allow")
-        self.conv.permissions._prompt_user = lambda *a, **k: (True, "")
+        # default mode: dangerous tools (Bash/Write/Edit) route to _prompt_user,
+        # which we redirect to the web approval flow below.
+        # Pin the model via profile (highest precedence) so a Claude Code-only id
+        # in ~/.claude/settings.json (e.g. "claude-fable-5[1m]") can't leak in.
+        self.conv = Conversation(cwd, permission_mode="default",
+                                 profile=AgentProfile(
+                                     model=get_model(),
+                                     style="始终使用简体中文回复用户;代码、命令、文件名等技术标识除外。"))
+        self.conv.permissions._prompt_user = self._web_prompt_user
         p = self.conv.profile
         p.temperature = PARAM_DEFAULTS["temperature"]
         p.max_tokens = PARAM_DEFAULTS["max_tokens"]
         p.thinking = PARAM_DEFAULTS["thinking"]
         p.thinking_budget = PARAM_DEFAULTS["thinking_budget"]
+
+    # -- web approval flow -----------------------------------------------------
+
+    def _web_prompt_user(self, tool_name: str, tool_input: dict,
+                         forced_by: str = "") -> tuple[bool, str]:
+        """Replace the CLI permission prompt: push a confirm card to the web UI
+        and block this turn until the user clicks 允许/拒绝 (or times out)."""
+        # 新建文件的 Write 自动放行;只有覆盖已有文件才要求确认
+        if tool_name == "Write":
+            fp = str(tool_input.get("file_path") or "")
+            ap = fp if os.path.isabs(fp) else os.path.join(self.cwd, fp)
+            if not os.path.exists(ap):
+                return True, ""
+        rec = self._rec
+        if rec is None:               # 不在流式回合中(理论上不会发生),避免死锁
+            return True, ""
+        if tool_name == "Bash":
+            summary, detail = "执行命令", str(tool_input.get("command") or "")
+        elif tool_name == "Write":
+            summary, detail = "覆盖已有文件", str(tool_input.get("file_path") or "")
+        elif tool_name == "Edit":
+            summary, detail = "修改文件", str(tool_input.get("file_path") or "")
+        else:
+            summary = "执行 " + tool_name
+            detail = json.dumps(tool_input, ensure_ascii=False)[:400]
+        req_id = uuid.uuid4().hex[:8]
+        self._approval_event = threading.Event()
+        self._approval_answer = False
+        req = {"type": "approval_request", "id": req_id, "tool": tool_name,
+               "summary": summary, "detail": detail[:2000]}
+        self.pending_approval = req
+        rec(req)
+        answered = self._approval_event.wait(timeout=900)   # 最长等 15 分钟
+        self.pending_approval = None
+        self._approval_event = None
+        approved = bool(self._approval_answer) if answered else False
+        rec({"type": "approval_result", "id": req_id, "approved": approved,
+             "timeout": (not answered)})
+        if approved:
+            return True, ""
+        return False, ("等待用户确认超时,已跳过该操作" if not answered else "用户拒绝执行该操作")
+
+    def resolve_approval(self, req_id: str, approved: bool) -> bool:
+        """Called from the /approve endpoint thread."""
+        pa, ev = self.pending_approval, self._approval_event
+        if not pa or not ev or (req_id and req_id != pa.get("id")):
+            return False
+        self._approval_answer = bool(approved)
+        ev.set()
+        return True
 
     def summary(self) -> dict:
         return {"id": self.id, "project": self.project, "title": self.title,
@@ -186,9 +249,13 @@ class Task:
         """Run one turn; emit(dict) per event. Also records events for replay."""
         def rec(ev):
             self.log.append(ev)
-            emit(ev)
+            try:
+                emit(ev)                    # 客户端断开时继续后台执行,不中断回合
+            except OSError:
+                pass
 
         with self.lock:
+            self._rec = rec
             conv = self.conv
             self.status = "working"
             self.updated = time.time()
@@ -231,11 +298,15 @@ class Task:
                 self.status = "error"
                 rec({"type": "error", "error": str(e)})
             finally:
+                self._rec = None
                 flush_text()
                 self.updated = time.time()
                 cost = getattr(conv.cost_tracker, "total_cost_usd", 0.0)
-                emit({"type": "done", "model": conv.model, "cost": round(cost, 5),
-                      "status": self.status})
+                try:
+                    emit({"type": "done", "model": conv.model, "cost": round(cost, 5),
+                          "status": self.status})
+                except OSError:
+                    pass
 
     def _stream_once(self, conv, emit, text_buf, flush_text) -> str:
         tool_uses = []
@@ -450,6 +521,17 @@ class Handler(BaseHTTPRequestHandler):
             if m:
                 self._handle_send(m.group(1))
                 return
+            m = re.match(r"^/api/tasks/([0-9a-f]+)/approve$", path)
+            if m:
+                task = TASKS.get(m.group(1))
+                data = self._read_body()
+                if not task:
+                    self._send_json({"error": "任务不存在"}, status=404)
+                elif task.resolve_approval(str(data.get("id") or ""), bool(data.get("approved"))):
+                    self._send_json({"ok": True})
+                else:
+                    self._send_json({"error": "没有待确认的操作或请求已过期"}, status=400)
+                return
             self.send_error(404)
 
     def _serve_project_file(self, path: str):
@@ -499,18 +581,24 @@ class Handler(BaseHTTPRequestHandler):
         if len(blob) > 20 * 1024 * 1024:
             self._send_json({"error": "文件过大(上限 20MB)"}, status=400)
             return
-        stem, ext = os.path.splitext(name)
-        final, i = name, 1
-        while os.path.exists(os.path.join(base, final)):
-            final = f"{stem}({i}){ext}"
-            i += 1
+        # 同名文件:内容相同直接复用,内容不同则覆盖 —— 反复上传不再堆积 (1)(2)(3) 副本
+        target = os.path.join(base, name)
+        replaced = os.path.exists(target)
+        if replaced:
+            try:
+                with open(target, "rb") as fh:
+                    if fh.read() == blob:
+                        self._send_json({"ok": True, "name": name, "unchanged": True})
+                        return
+            except OSError:
+                pass
         try:
-            with open(os.path.join(base, final), "wb") as fh:
+            with open(target, "wb") as fh:
                 fh.write(blob)
         except OSError as e:
             self._send_json({"error": f"写入失败: {e}"}, status=500)
             return
-        self._send_json({"ok": True, "name": final})
+        self._send_json({"ok": True, "name": name, "replaced": replaced})
 
     def _serve_html(self):
         try:
