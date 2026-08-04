@@ -34,3 +34,7 @@ credentials.json
 
 # Web sandbox projects (created at runtime by oc_codex_server.py)
 sandbox/
+
+# React frontend build artefacts (web/dist is covered by dist/ above)
+node_modules/
+.vite/

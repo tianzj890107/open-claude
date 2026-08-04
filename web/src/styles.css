@@ -1,0 +1,264 @@
+:root {
+  --oc-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --oc-bg: #0e0f11;
+  --oc-panel: #17181c;
+  --oc-border: #2a2d34;
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: var(--oc-bg);
+}
+
+/* ------------------------------------------------------------------ layout */
+
+.oc-shell {
+  height: 100vh;
+  overflow: hidden;
+}
+
+.oc-sider {
+  border-right: 1px solid var(--oc-border);
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.oc-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 16px 12px;
+}
+
+.oc-brand-mark {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #d97757, #b4522f);
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 13px;
+  color: #fff;
+}
+
+.oc-tasklist {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 8px 12px;
+}
+
+.oc-task-row {
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.oc-task-row:hover {
+  background: #1b1d22;
+}
+
+.oc-task-row.active {
+  background: #1f2128;
+  border-color: var(--oc-border);
+}
+
+.oc-task-title {
+  font-size: 13px;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.oc-main {
+  height: 100vh;
+  display: flex;
+  min-width: 0;
+}
+
+.oc-center {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.oc-topbar {
+  height: 52px;
+  flex: 0 0 52px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--oc-border);
+}
+
+.oc-chat {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* --------------------------------------------------------------- home view */
+
+.oc-home {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.oc-home-inner {
+  width: min(680px, 100%);
+}
+
+/* --------------------------------------------------------- tool call cards */
+
+.oc-tool {
+  margin: 8px 0;
+  border: 1px solid var(--oc-border);
+  border-radius: 10px;
+  background: #141519;
+  overflow: hidden;
+  font-size: 13px;
+}
+
+.oc-tool-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.oc-tool-name {
+  font-family: var(--oc-mono);
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+
+.oc-tool-arg {
+  font-family: var(--oc-mono);
+  font-size: 12px;
+  color: #a8adb7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.oc-tool-arg.link {
+  color: #7aa7ff;
+  cursor: pointer;
+}
+
+.oc-tool-arg.link:hover {
+  text-decoration: underline;
+}
+
+.oc-tool-body {
+  border-top: 1px solid var(--oc-border);
+  padding: 10px 12px;
+  background: #0f1013;
+  max-height: 340px;
+  overflow: auto;
+}
+
+.oc-pre {
+  margin: 0;
+  font-family: var(--oc-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.oc-pre.err {
+  color: #ff8080;
+}
+
+.oc-diff-add {
+  color: #7ee08a;
+}
+
+.oc-diff-del {
+  color: #ff8f8f;
+}
+
+/* ----------------------------------------------------------- preview panel */
+
+.oc-preview {
+  width: 460px;
+  flex: 0 0 460px;
+  border-left: 1px solid var(--oc-border);
+  display: flex;
+  flex-direction: column;
+  background: var(--oc-panel);
+}
+
+.oc-preview-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--oc-border);
+}
+
+.oc-preview-body {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+}
+
+.oc-preview-frame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #fff;
+}
+
+.oc-code {
+  margin: 0;
+  padding: 12px;
+  font-family: var(--oc-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre;
+  overflow: auto;
+}
+
+.oc-md {
+  padding: 16px;
+  line-height: 1.7;
+}
+
+.oc-md pre {
+  background: #0f1013;
+  padding: 10px;
+  border-radius: 8px;
+  overflow: auto;
+}
+
+.oc-md code {
+  font-family: var(--oc-mono);
+  font-size: 12px;
+}
+
+.oc-md img {
+  max-width: 100%;
+}
+
+/* CopilotKit's chat fills whatever box we give it. */
+.oc-chat > * {
+  height: 100%;
+}

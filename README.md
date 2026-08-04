@@ -220,6 +220,28 @@ The web session runs non-interactively (auto-approves tools, like
 `--dangerously-skip-permissions`), since there is no terminal to answer
 permission prompts; deny rules in settings/profiles are still honored.
 
+### Agent UI (React + CopilotKit)
+
+A coding-agent workspace — task list, streaming transcript with tool-call cards,
+approval dialogs for dangerous operations, and a file tree/preview panel. It runs
+the **full** agent (Bash, file edits, skills, sub-agents, MCP), but every session
+is confined to a project folder under `sandbox/`, enforced at the tool-dispatch
+layer via `OC_SANDBOX_ROOT`.
+
+```bash
+cd web && npm install && npm run build && cd ..   # once
+python oc_codex_server.py                          # http://127.0.0.1:47313/
+```
+
+The frontend is React + Ant Design; the chat surface is CopilotKit talking the
+AG-UI protocol straight to `POST /api/agui` on the Python server — there is no
+Node process at runtime. For frontend development with hot reload:
+
+```bash
+python oc_codex_server.py        # backend on 47313
+cd web && npm run dev            # UI on 5173, proxies /api and /p to the backend
+```
+
 ### CLI Options
 
 ```

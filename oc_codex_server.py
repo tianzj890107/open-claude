@@ -51,7 +51,15 @@ from open_claude.config import (
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 HTML_PATH = os.path.join(SCRIPT_DIR, "codex_web.html")
+WEB_DIST = os.path.join(SCRIPT_DIR, "web", "dist")
 SANDBOX_DIR = os.path.join(SCRIPT_DIR, "sandbox")
+
+# Windows registry entries routinely map .js to text/plain, which browsers refuse
+# to run as a module. Pin the types the built app depends on.
+mimetypes.add_type("application/javascript", ".js")
+mimetypes.add_type("application/javascript", ".mjs")
+mimetypes.add_type("text/css", ".css")
+mimetypes.add_type("image/svg+xml", ".svg")
 
 # Project names: letters/digits/CJK plus - _ . (no separators, no traversal).
 _PROJECT_NAME_RE = re.compile(r"^[\w\-.一-鿿]{1,64}$")
@@ -366,6 +374,134 @@ class Task:
         return stop_reason
 
 
+# ---------------------------------------------------------------------------
+# AG-UI protocol adapter
+#
+# The React frontend talks the AG-UI protocol (@ag-ui/client's HttpAgent), which
+# CopilotKit consumes directly — no Node runtime in the loop. This translates the
+# turn events open-claude already emits into AG-UI's event vocabulary.
+#
+# Wire rules verified against @ag-ui/client 0.0.57:
+#   - TOOL_CALL_START may reference a parentMessageId that no TEXT_MESSAGE_START
+#     ever opened; the client materialises the assistant message for it.
+#   - A message closed with TEXT_MESSAGE_END can still gain tool calls afterwards,
+#     so text and tool calls from one assistant turn land in one bubble.
+#   - REASONING_MESSAGE_START requires role="reasoning" (schema-validated).
+# ---------------------------------------------------------------------------
+
+# Tool output can be megabytes (a big Read, a chatty build); cap what crosses the
+# wire. The agent still sees the full result — this only trims the UI copy.
+_MAX_RESULT_CHARS = 20000
+
+
+def _new_id() -> str:
+    return uuid.uuid4().hex[:16]
+
+
+class AGUIStream:
+    """Turns open-claude turn events into AG-UI events on an SSE writer."""
+
+    def __init__(self, send):
+        self._send = send
+        self.msg_id: str | None = None      # assistant message currently building
+        self.text_open = False
+        self.reason_id: str | None = None
+        self.errored = False
+
+    def _ev(self, **kw):
+        self._send(kw)
+
+    # -- message framing -------------------------------------------------------
+
+    def _close_text(self):
+        if self.text_open:
+            self._ev(type="TEXT_MESSAGE_END", messageId=self.msg_id)
+            self.text_open = False
+
+    def _close_reasoning(self):
+        if self.reason_id:
+            self._ev(type="REASONING_MESSAGE_END", messageId=self.reason_id)
+            self.reason_id = None
+
+    def run_started(self, thread_id: str, run_id: str):
+        self._ev(type="RUN_STARTED", threadId=thread_id, runId=run_id)
+
+    def run_finished(self, thread_id: str, run_id: str):
+        if self.errored:      # RUN_ERROR already terminated the run
+            return
+        self._close_text()
+        self._close_reasoning()
+        self._ev(type="RUN_FINISHED", threadId=thread_id, runId=run_id)
+
+    def run_error(self, message: str):
+        if self.errored:
+            return
+        self._close_text()
+        self._close_reasoning()
+        self.errored = True
+        self._ev(type="RUN_ERROR", message=message)
+
+    # -- open-claude event -> AG-UI --------------------------------------------
+
+    def feed(self, ev: dict):
+        t = ev.get("type")
+
+        if t == "text":
+            self._close_reasoning()
+            if not self.text_open:
+                self.msg_id = self.msg_id or _new_id()
+                self._ev(type="TEXT_MESSAGE_START", messageId=self.msg_id,
+                         role="assistant")
+                self.text_open = True
+            self._ev(type="TEXT_MESSAGE_CONTENT", messageId=self.msg_id,
+                     delta=ev.get("text", ""))
+
+        elif t == "thinking":
+            # Reasoning is its own message kind; end the text bubble and start a
+            # fresh one afterwards so the two never interleave in a single id.
+            if self.text_open:
+                self._close_text()
+                self.msg_id = None
+            if not self.reason_id:
+                self.reason_id = _new_id()
+                self._ev(type="REASONING_MESSAGE_START",
+                         messageId=self.reason_id, role="reasoning")
+            self._ev(type="REASONING_MESSAGE_CONTENT",
+                     messageId=self.reason_id, delta=ev.get("text", ""))
+
+        elif t == "tool_use":
+            self._close_reasoning()
+            self._close_text()          # keep msg_id: tool calls join that bubble
+            self.msg_id = self.msg_id or _new_id()
+            self._ev(type="TOOL_CALL_START", toolCallId=ev.get("id", ""),
+                     toolCallName=ev.get("name", ""), parentMessageId=self.msg_id)
+            self._ev(type="TOOL_CALL_ARGS", toolCallId=ev.get("id", ""),
+                     delta=json.dumps(ev.get("input") or {}, ensure_ascii=False))
+            self._ev(type="TOOL_CALL_END", toolCallId=ev.get("id", ""))
+
+        elif t == "tool_result":
+            content = ev.get("content", "")
+            if len(content) > _MAX_RESULT_CHARS:
+                content = content[:_MAX_RESULT_CHARS] + "\n…(输出已截断)"
+            self._ev(type="TOOL_CALL_RESULT", messageId=_new_id(),
+                     toolCallId=ev.get("tool_use_id", ""), role="tool",
+                     content=content)
+            # Whatever the model says next belongs to a new assistant message.
+            self.msg_id = None
+            self.text_open = False
+
+        elif t in ("approval_request", "approval_result"):
+            # Out-of-band UI signal, not conversation content: the frontend pops
+            # a confirm dialog and answers via /api/tasks/<id>/approve.
+            self._ev(type="CUSTOM", name=t, value=ev)
+
+        elif t == "error":
+            self.run_error(str(ev.get("error", "")))
+
+        # "done" is emitted by stream_turn after the loop; RUN_FINISHED is sent
+        # by the request handler instead, so it carries thread/run ids.
+
+
 TASKS: dict[str, Task] = {}
 TASKS_LOCK = threading.Lock()
 
@@ -453,7 +589,11 @@ class Handler(BaseHTTPRequestHandler):
         path = unquote(parsed.path)
         qs = parse_qs(parsed.query)
         if path in ("/", "/index.html"):
+            self._serve_app()
+        elif path == "/legacy":
             self._serve_html()
+        elif path.startswith("/assets/") or path in ("/vite.svg", "/favicon.ico"):
+            self._serve_static(path)
         elif path == "/api/files":
             base = project_path((qs.get("project") or [""])[0])
             if not base:
@@ -516,6 +656,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(e)}, status=400)
         elif path == "/api/upload":
             self._handle_upload()
+        elif path == "/api/agui":
+            self._handle_agui(parse_qs(urlparse(self.path).query))
         else:
             m = re.match(r"^/api/tasks/([0-9a-f]+)/send$", path)
             if m:
@@ -600,6 +742,42 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._send_json({"ok": True, "name": name, "replaced": replaced})
 
+    def _send_file(self, filepath: str, ctype: str):
+        try:
+            with open(filepath, "rb") as fh:
+                body = fh.read()
+        except OSError:
+            self.send_error(404)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_app(self):
+        """Serve the built React app; fall back to the legacy page if unbuilt."""
+        index = os.path.join(WEB_DIST, "index.html")
+        if os.path.isfile(index):
+            self._send_file(index, "text/html; charset=utf-8")
+            return
+        self._serve_html()
+
+    def _serve_static(self, path: str):
+        """Serve a hashed asset out of web/dist (paths are build-generated)."""
+        rel = path.lstrip("/").replace("/", os.sep)
+        f = os.path.realpath(os.path.join(WEB_DIST, rel))
+        root = os.path.realpath(WEB_DIST)
+        if not f.startswith(root + os.sep) or not os.path.isfile(f):
+            self.send_error(404)
+            return
+        ctype, _ = mimetypes.guess_type(f)
+        ctype = ctype or "application/octet-stream"
+        if ctype.startswith("text/") or ctype in ("application/json",
+                                                  "application/javascript"):
+            ctype += "; charset=utf-8"
+        self._send_file(f, ctype)
+
     def _serve_html(self):
         try:
             with open(HTML_PATH, "rb") as fh:
@@ -612,6 +790,59 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _handle_agui(self, qs: dict):
+        """POST /api/agui?task=<id> — AG-UI run endpoint for the React client.
+
+        Body is a RunAgentInput. We are the authority on conversation history
+        (each Task owns a real open-claude Conversation), so of the messages the
+        client replays we only take the newest user turn.
+        """
+        data = self._read_body()
+        thread_id = str(data.get("threadId") or "")
+        run_id = str(data.get("runId") or _new_id())
+        fwd = data.get("forwardedProps") or {}
+        task_id = (qs.get("task") or [""])[0] or str(fwd.get("taskId") or "")
+        task = TASKS.get(task_id)
+
+        text = ""
+        for msg in reversed(data.get("messages") or []):
+            if isinstance(msg, dict) and msg.get("role") == "user":
+                text = _stringify(msg.get("content") or "").strip()
+                break
+
+        # useAgentContext() entries from the UI (open file, uploads, …) ride along
+        # as a short preamble rather than polluting the stored user message.
+        ctx = [c for c in (data.get("context") or []) if isinstance(c, dict)]
+        if text and ctx:
+            lines = [f"- {c.get('description', '')}: {c.get('value', '')}" for c in ctx]
+            text += "\n\n[界面上下文]\n" + "\n".join(lines)
+
+        self.close_connection = True
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "close")
+        self.end_headers()
+
+        def send(obj):
+            self.wfile.write(("data: " + json.dumps(obj, ensure_ascii=False)
+                              + "\n\n").encode("utf-8"))
+            self.wfile.flush()
+
+        stream = AGUIStream(send)
+        try:
+            stream.run_started(thread_id, run_id)
+            if not task:
+                stream.run_error("任务不存在,请重新创建任务")
+                return
+            if not text:
+                stream.run_error("空消息")
+                return
+            task.stream_turn(text, stream.feed)
+            stream.run_finished(thread_id, run_id)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass    # client went away mid-turn; the turn state is already saved
 
     def _handle_send(self, task_id: str):
         task = TASKS.get(task_id)
@@ -663,6 +894,10 @@ def main():
         print(f"Error: no API key for {spec.get('label', provider)}. "
               f"Set {envs} or add it to ~/.claude/config.json", file=sys.stderr)
         sys.exit(1)
+
+    if not os.path.isfile(os.path.join(WEB_DIST, "index.html")):
+        print("[codex] web/dist 未构建,暂时回退到旧版单文件前端。"
+              "构建 React 前端:cd web && npm install && npm run build", file=sys.stderr)
 
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     url = f"http://{args.host}:{args.port}/"
