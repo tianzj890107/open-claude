@@ -94,6 +94,37 @@ def _stringify(content) -> str:
     return str(content)
 
 
+def _user_text(content) -> str:
+    """Flatten a user message, naming attachments instead of dumping them.
+
+    Files picked from the composer arrive as attachment parts carrying a URL and
+    a filename. The bytes are already in the workspace (the upload happened
+    before the message was sent), so the model only needs the names.
+    """
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return str(content)
+
+    parts, files = [], []
+    for blk in content:
+        if not isinstance(blk, dict):
+            parts.append(str(blk))
+            continue
+        if blk.get("text"):
+            parts.append(str(blk["text"]))
+            continue
+        meta = blk.get("metadata") or {}
+        name = meta.get("filename") or blk.get("filename") or meta.get("name")
+        if name:
+            files.append(str(name))
+    text = "\n".join(p for p in parts if p)
+    if files:
+        text += ("\n\n" if text else "") + \
+            "[用户上传的文件,已经在你的工作区里: " + "、".join(files) + "]"
+    return text
+
+
 # ---------------------------------------------------------------------------
 # Artifacts — files the assistant produced, exposed by opaque id only
 # ---------------------------------------------------------------------------
@@ -156,6 +187,8 @@ class Chat:
         # id -> {"id", "name", "kind", "size", "created"}; path kept server-side
         self.artifacts: dict[str, dict] = {}
         self._paths: dict[str, str] = {}
+        # Files the user attached, likewise addressable only by opaque id.
+        self.uploads: dict[str, str] = {}
 
         self.scrub = _make_scrub(self.cwd)
 
@@ -477,6 +510,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"chats": [c.summary() for c in items]})
         elif path.startswith("/api/artifact/"):
             self._serve_artifact(path, qs)
+        elif path.startswith("/api/upload/"):
+            self._serve_upload(path)
         else:
             m = re.match(r"^/api/chats/([0-9a-f]+)$", path)
             if m:
@@ -575,6 +610,22 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _serve_upload(self, path: str):
+        """GET /api/upload/<chat>/<id> — a file the user attached, by opaque id."""
+        m = re.match(r"^/api/upload/([0-9a-f]+)/([0-9a-f]+)$", path)
+        chat = CHATS.get(m.group(1)) if m else None
+        name = chat.uploads.get(m.group(2)) if chat and m else None
+        if not name:
+            self.send_error(404)
+            return
+        f = os.path.realpath(os.path.join(chat.cwd, name))
+        root = os.path.realpath(chat.cwd)
+        if not f.startswith(root + os.sep) or not os.path.isfile(f):
+            self.send_error(404)
+            return
+        ctype, _ = mimetypes.guess_type(name)
+        self._serve_file(f, ctype or "application/octet-stream")
+
     def _handle_upload(self, data: dict):
         """POST /api/upload {chat, name, data(base64)} — into the hidden workspace."""
         chat = CHATS.get(str(data.get("chat") or ""))
@@ -599,7 +650,12 @@ class Handler(BaseHTTPRequestHandler):
         except OSError as e:
             self._send_json({"error": f"保存失败: {e}"}, status=500)
             return
-        self._send_json({"ok": True, "name": name})
+        # The composer needs a URL for its attachment chip; hand back an opaque
+        # id rather than anything that reveals where the file actually landed.
+        uid = next((k for k, v in chat.uploads.items() if v == name), None) or uuid.uuid4().hex[:16]
+        chat.uploads[uid] = name
+        self._send_json({"ok": True, "name": name, "id": uid,
+                         "url": f"/api/upload/{chat.id}/{uid}"})
 
     def _handle_agui(self, qs: dict, data: dict):
         """POST /api/agui?chat=<id> — AG-UI run endpoint."""
@@ -610,7 +666,7 @@ class Handler(BaseHTTPRequestHandler):
         text = ""
         for msg in reversed(data.get("messages") or []):
             if isinstance(msg, dict) and msg.get("role") == "user":
-                text = _stringify(msg.get("content") or "").strip()
+                text = _user_text(msg.get("content") or "").strip()
                 break
 
         ctx = [c for c in (data.get("context") or []) if isinstance(c, dict)]

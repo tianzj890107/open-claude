@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Button, Collapse, Spin, Tag, Tooltip, Typography, Upload, message } from "antd";
+import { Button, Collapse, Spin, Tag, Tooltip, Typography, message } from "antd";
 import {
   DatabaseOutlined,
   EditOutlined,
   FileTextOutlined,
-  PaperClipOutlined,
-  SettingOutlined,
   ThunderboltFilled,
   UnorderedListOutlined,
 } from "@ant-design/icons";
@@ -15,7 +13,6 @@ import {
   HttpAgent,
   defineToolCallRenderer,
   useAgent,
-  useAgentContext,
 } from "@copilotkit/react-core/v2";
 import { readAsBase64 } from "../api";
 import { logToMessages } from "../replay";
@@ -72,25 +69,38 @@ function RunBridge({
   return null;
 }
 
-/** Tells the assistant which files the user just handed it. */
-function UploadContext({ names }: { names: string[] }) {
-  useAgentContext({ description: "用户刚上传的文件", value: names.join("、") });
-  return null;
-}
-
 interface ThreadProps {
   chat: ChatSummary;
-  uploads: string[];
   onArtifacts: (a: Artifact[]) => void;
   onEnd: () => void;
 }
 
-function Thread({ chat, uploads, onArtifacts, onEnd }: ThreadProps) {
+function Thread({ chat, onArtifacts, onEnd }: ThreadProps) {
   const agent = useMemo(
     () => new HttpAgent({ url: `/api/agui?chat=${encodeURIComponent(chat.id)}` }),
     [chat.id],
   );
   const [ready, setReady] = useState(false);
+
+  // Wires the composer's “+” to our upload route: the bytes go into the hidden
+  // workspace, and the chip the user sees points at an opaque id, never a path.
+  const attachments = useMemo(
+    () => ({
+      enabled: true,
+      maxSize: 20 * 1024 * 1024,
+      onUpload: async (file: File) => {
+        const r = await chatApi.upload(chat.id, file.name, await readAsBase64(file));
+        return {
+          type: "url" as const,
+          value: r.url,
+          mimeType: file.type || undefined,
+          metadata: { filename: r.name },
+        };
+      },
+      onUploadFailed: ({ message: m }: { message: string }) => message.error(m),
+    }),
+    [chat.id],
+  );
 
   useEffect(() => {
     let alive = true;
@@ -118,10 +128,9 @@ function Thread({ chat, uploads, onArtifacts, onEnd }: ThreadProps) {
   return (
     <CopilotKitProvider agents__unsafe_dev_only={{ default: agent }} renderToolCalls={TOOL_RENDERERS}>
       <div className="cc-chat">
-        <CopilotChat labels={LABELS} />
+        <CopilotChat labels={LABELS} attachments={attachments} />
       </div>
       <RunBridge onArtifacts={onArtifacts} onEnd={onEnd} />
-      {uploads.length > 0 && <UploadContext names={uploads} />}
     </CopilotKitProvider>
   );
 }
@@ -131,7 +140,6 @@ export default function ChatApp() {
   const [chats, setChats] = useState<ChatSummary[]>([]);
   const [active, setActive] = useState<ChatSummary | null>(null);
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
-  const [uploads, setUploads] = useState<string[]>([]);
   const [selected, setSelected] = useState<Artifact | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
   const [settings, setSettings] = useState<string | null>(null);
@@ -140,7 +148,6 @@ export default function ChatApp() {
     const c = await chatApi.create();
     setActive(c);
     setArtifacts([]);
-    setUploads([]);
     setSelected(null);
     setPanelOpen(false);
     setChats(await chatApi.chats());
@@ -161,7 +168,6 @@ export default function ChatApp() {
     const detail = await chatApi.chat(c.id);
     setActive(c);
     setArtifacts(detail.artifacts);
-    setUploads([]);
     setSelected(null);
   };
 
@@ -179,18 +185,6 @@ export default function ChatApp() {
   const onEnd = useCallback(() => {
     void chatApi.chats().then(setChats);
   }, []);
-
-  const upload = async (f: File) => {
-    if (!active) return false;
-    try {
-      const r = await chatApi.upload(active.id, f.name, await readAsBase64(f));
-      setUploads((u) => [...new Set([...u, r.name])]);
-      message.success(`已上传 ${r.name}`);
-    } catch (e) {
-      message.error((e as Error).message);
-    }
-    return false;
-  };
 
   if (!meta || !active) {
     return (
@@ -267,16 +261,10 @@ export default function ChatApp() {
       </aside>
 
       <main className="cc-main">
+        {/* Only one control here: everything else lives in the left sidebar,
+            and attaching files belongs in the composer's “+”. */}
         <div className="cc-topbar">
-          <Button type="text" onClick={() => setSettings("modelparams")}>
-            {meta.model}
-          </Button>
           <div style={{ flex: 1 }} />
-          <Upload beforeUpload={upload} showUploadList={false} multiple>
-            <Tooltip title="上传文件给助手">
-              <Button type="text" icon={<PaperClipOutlined />} />
-            </Tooltip>
-          </Upload>
           <Tooltip title="生成的内容">
             <Button
               type="text"
@@ -287,18 +275,9 @@ export default function ChatApp() {
               }}
             />
           </Tooltip>
-          <Tooltip title="设置">
-            <Button type="text" icon={<SettingOutlined />} onClick={() => setSettings("modelparams")} />
-          </Tooltip>
         </div>
 
-        <Thread
-          key={active.id}
-          chat={active}
-          uploads={uploads}
-          onArtifacts={onArtifacts}
-          onEnd={onEnd}
-        />
+        <Thread key={active.id} chat={active} onArtifacts={onArtifacts} onEnd={onEnd} />
 
         {artifacts.length > 0 && (
           <div className="cc-outputs">

@@ -59,7 +59,11 @@ export const chatApi = {
   chat: (id: string) => req<ChatDetail>(`/api/chats/${id}`),
   create: () => post<ChatSummary>("/api/chats"),
   upload: (chat: string, name: string, data: string) =>
-    post<{ ok: true; name: string }>("/api/upload", { chat, name, data }),
+    post<{ ok: true; name: string; id: string; url: string }>("/api/upload", {
+      chat,
+      name,
+      data,
+    }),
   setModel: (model: string) => post<{ model: string }>("/api/model", { model }),
   setParams: (p: Partial<Params>) => post<Params>("/api/params", p),
 };
