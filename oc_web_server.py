@@ -17,6 +17,10 @@ Wired through:
   - model switching across providers
   - conversation memory / auto-compaction
 
+The UI is the React app built into web/dist (plain.html); it speaks the AG-UI
+protocol to /api/agui, the same as the other two surfaces. The original
+single-file page is still served at /legacy.
+
 Run:
     python oc_web_server.py [--cwd DIR] [--profile NAME] [--port 47291]
 then open http://127.0.0.1:47291/ in a browser.
@@ -24,11 +28,15 @@ then open http://127.0.0.1:47291/ in a browser.
 
 import argparse
 import json
+import mimetypes
 import os
 import sys
 import threading
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse
+
+from oc_agui import AGUIStream, new_id
 
 # --- import open-claude's engine (unmodified) ------------------------------
 from open_claude.repl import Conversation
@@ -46,6 +54,13 @@ from open_claude.sessions import SessionStore
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 HTML_PATH = os.path.join(SCRIPT_DIR, "generic_claude_gpt_style_chat.html")
+WEB_DIST = os.path.join(SCRIPT_DIR, "web", "dist")
+PLAIN_HTML = os.path.join(WEB_DIST, "plain.html")
+
+# Windows registry entries routinely map .js to text/plain, which browsers refuse
+# to run as a module. Pin the types the built app depends on.
+mimetypes.add_type("application/javascript", ".js")
+mimetypes.add_type("text/css", ".css")
 
 
 def _stringify(content) -> str:
@@ -83,6 +98,8 @@ class Bridge:
         self.conv.tool_schemas = []
 
         self.lock = threading.Lock()
+        # Replayable transcript, so a browser refresh doesn't lose the thread.
+        self.log: list[dict] = []
 
     # -- introspection -------------------------------------------------------
 
@@ -129,6 +146,7 @@ class Bridge:
     def reset(self):
         with self.lock:
             self.conv.messages.clear()
+            self.log.clear()
             self.conv.session = SessionStore(self.cwd)
             self.conv.cost_tracker.__init__()
 
@@ -139,11 +157,22 @@ class Bridge:
 
     # -- the turn loop (mirrors Conversation.run_turn, but emits SSE) ---------
 
-    def stream_turn(self, text: str, emit):
-        """Run one full turn, calling emit(dict) for each event."""
+    def stream_turn(self, text: str, out):
+        """Run one full turn, calling out(dict) for each event."""
         with self.lock:
             conv = self.conv
+            self.log.append({"type": "user", "text": text})
             conv.add_user_message(text)
+            reply: list[str] = []
+
+            def emit(ev):
+                """Forward an event, and record what a reload would need to redraw."""
+                if ev.get("type") == "text":
+                    reply.append(ev["text"])
+                elif ev.get("type") == "error":
+                    self.log.append(ev)
+                out(ev)
+
             try:
                 for _ in range(max(1, conv.profile.max_iterations)):
                     conv._maybe_compact()
@@ -170,6 +199,8 @@ class Bridge:
                 traceback.print_exc()
                 emit({"type": "error", "error": str(e)})
             finally:
+                if reply:
+                    self.log.append({"type": "assistant", "text": "".join(reply)})
                 cost = getattr(conv.cost_tracker, "total_cost_usd", 0.0)
                 emit({"type": "done", "model": conv.model, "cost": round(cost, 5)})
 
@@ -261,27 +292,38 @@ class Handler(BaseHTTPRequestHandler):
     # -- routes --------------------------------------------------------------
 
     def do_GET(self):
-        if self.path in ("/", "/index.html"):
-            self._serve_html()
-        elif self.path == "/api/meta":
+        path = urlparse(self.path).path
+        if path in ("/", "/index.html", "/plain.html"):
+            self._serve_app()
+        elif path == "/legacy":
+            self._serve_file(HTML_PATH, "text/html; charset=utf-8")
+        elif path.startswith("/assets/"):
+            self._serve_static(path)
+        elif path == "/api/meta":
             self._send_json(bridge.meta())
+        elif path == "/api/history":
+            self._send_json({"log": bridge.log})
         else:
             self.send_error(404)
 
     def do_POST(self):
-        if self.path == "/api/send":
-            self._handle_send()
-        elif self.path == "/api/new":
+        path = urlparse(self.path).path
+        # Drained up front: a body left unread on a keep-alive connection is
+        # parsed as the next request line and desynchronises the connection.
+        data = self._read_body()
+        if path == "/api/send":
+            self._handle_send(data)
+        elif path == "/api/agui":
+            self._handle_agui(data)
+        elif path == "/api/new":
             bridge.reset()
             self._send_json({"ok": True})
-        elif self.path == "/api/model":
-            data = self._read_body()
+        elif path == "/api/model":
             mid = data.get("model", "")
             if mid:
                 bridge.set_model(mid)
             self._send_json({"ok": True, "model": bridge.conv.model})
-        elif self.path == "/api/params":
-            data = self._read_body()
+        elif path == "/api/params":
             try:
                 self._send_json(bridge.set_params(data))
             except (ValueError, TypeError) as e:
@@ -289,21 +331,80 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self.send_error(404)
 
-    def _serve_html(self):
+    def _serve_file(self, filepath: str, ctype: str):
         try:
-            with open(HTML_PATH, "rb") as fh:
+            with open(filepath, "rb") as fh:
                 body = fh.read()
         except OSError:
-            self.send_error(500, "frontend html not found")
+            self.send_error(404)
             return
         self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
-    def _handle_send(self):
-        data = self._read_body()
+    def _serve_app(self):
+        """Serve the built React app; fall back to the legacy page if unbuilt."""
+        if os.path.isfile(PLAIN_HTML):
+            self._serve_file(PLAIN_HTML, "text/html; charset=utf-8")
+        else:
+            self._serve_file(HTML_PATH, "text/html; charset=utf-8")
+
+    def _serve_static(self, path: str):
+        rel = path.lstrip("/").replace("/", os.sep)
+        f = os.path.realpath(os.path.join(WEB_DIST, rel))
+        root = os.path.realpath(WEB_DIST)
+        if not f.startswith(root + os.sep) or not os.path.isfile(f):
+            self.send_error(404)
+            return
+        ctype, _ = mimetypes.guess_type(f)
+        ctype = ctype or "application/octet-stream"
+        if ctype.startswith("text/") or ctype in ("application/json",
+                                                  "application/javascript"):
+            ctype += "; charset=utf-8"
+        self._serve_file(f, ctype)
+
+    def _handle_agui(self, data: dict):
+        """POST /api/agui — AG-UI run endpoint for the React/CopilotKit client.
+
+        The bridge owns the conversation, so of the messages the client replays
+        only the newest user turn is taken.
+        """
+        thread_id = str(data.get("threadId") or "")
+        run_id = str(data.get("runId") or new_id())
+
+        text = ""
+        for msg in reversed(data.get("messages") or []):
+            if isinstance(msg, dict) and msg.get("role") == "user":
+                text = _stringify(msg.get("content") or "").strip()
+                break
+
+        self.close_connection = True
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "close")
+        self.end_headers()
+
+        def send(obj):
+            self.wfile.write(("data: " + json.dumps(obj, ensure_ascii=False)
+                              + "\n\n").encode("utf-8"))
+            self.wfile.flush()
+
+        stream = AGUIStream(send)
+        try:
+            stream.run_started(thread_id, run_id)
+            if not text:
+                stream.run_error("空消息")
+                return
+            bridge.stream_turn(text, stream.feed)
+            stream.run_finished(thread_id, run_id)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+
+    def _handle_send(self, data: dict):
+        """Legacy SSE route, kept for the single-file page served at /legacy."""
         text = (data.get("message") or "").strip()
         # One turn per request: close the connection when the stream ends so the
         # client gets a clean EOF (no Content-Length is known up front for SSE).

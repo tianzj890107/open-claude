@@ -19,7 +19,7 @@ import { logToMessages } from "../replay";
 import { chatApi, type Artifact, type ChatSummary, type Meta } from "./api";
 import ActivityCard from "./ActivityCard";
 import ArtifactPanel, { KIND_ICON } from "./ArtifactPanel";
-import SettingsModal, { PANELS } from "./SettingsModal";
+import SettingsModal, { PANELS } from "../shared/SettingsModal";
 
 const LABELS = {
   chatInputPlaceholder: "给助手发送消息…",

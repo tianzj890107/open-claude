@@ -2,9 +2,10 @@ import { resolve } from "node:path";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// Two apps share this project:
+// Three apps share this project:
 //   index.html — developer agent workspace, served by oc_codex_server.py (47313)
 //   chat.html  — consumer assistant,       served by oc_chat_server.py  (47292)
+//   plain.html — pure conversation,        served by oc_web_server.py   (47291)
 // `npm run dev` proxies to whichever backend OC_BACKEND points at; `npm run
 // build` emits both into web/dist, which each Python server serves itself, so
 // production needs no Node process at all.
@@ -27,6 +28,7 @@ export default defineConfig({
       input: {
         index: resolve(__dirname, "index.html"),
         chat: resolve(__dirname, "chat.html"),
+        plain: resolve(__dirname, "plain.html"),
       },
     },
   },

@@ -1,5 +1,24 @@
 import { Alert, Form, InputNumber, Modal, Radio, Slider, Switch, Typography, message } from "antd";
-import { chatApi, type Meta } from "./api";
+import type { Meta } from "../chat/api";
+
+/** All three servers expose the same /api/meta, /api/model and /api/params
+ *  shapes, so this panel is shared verbatim across the surfaces. */
+const post = async (url: string, data: unknown) => {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((body as { error?: string }).error || `HTTP ${res.status}`);
+  return body;
+};
+
+const settingsApi = {
+  meta: () => fetch("/api/meta").then((r) => r.json() as Promise<Meta>),
+  setModel: (model: string) => post("/api/model", { model }),
+  setParams: (p: Record<string, unknown>) => post("/api/params", p),
+};
 
 /** Sidebar panels carried over from the original UI. Only 模型参数 is wired up;
  *  the rest describe planned capabilities and say so plainly. */
@@ -69,7 +88,7 @@ export default function SettingsModal({ panel, meta, onMeta, onClose }: Props) {
   const patch = async (fn: () => Promise<unknown>) => {
     try {
       await fn();
-      onMeta(await chatApi.meta());
+      onMeta(await settingsApi.meta());
     } catch (e) {
       message.error((e as Error).message);
     }
@@ -101,7 +120,7 @@ export default function SettingsModal({ panel, meta, onMeta, onClose }: Props) {
           <Radio.Group
             value={meta.model}
             style={{ display: "flex", flexDirection: "column", gap: 6, width: "100%" }}
-            onChange={(e) => void patch(() => chatApi.setModel(e.target.value))}
+            onChange={(e) => void patch(() => settingsApi.setModel(e.target.value))}
           >
             {meta.models.map((m) => (
               <Radio.Button
@@ -126,7 +145,7 @@ export default function SettingsModal({ panel, meta, onMeta, onClose }: Props) {
                 step={256}
                 placeholder={String(meta.params.default_max_tokens)}
                 value={meta.params.max_tokens ?? undefined}
-                onChange={(v) => void patch(() => chatApi.setParams({ max_tokens: v ?? null }))}
+                onChange={(v) => void patch(() => settingsApi.setParams({ max_tokens: v ?? null }))}
               />
             </Form.Item>
 
@@ -137,14 +156,14 @@ export default function SettingsModal({ panel, meta, onMeta, onClose }: Props) {
                 step={0.1}
                 disabled={meta.params.thinking}
                 value={meta.params.temperature ?? 1}
-                onChangeComplete={(v) => void patch(() => chatApi.setParams({ temperature: v }))}
+                onChangeComplete={(v) => void patch(() => settingsApi.setParams({ temperature: v }))}
               />
             </Form.Item>
 
             <Form.Item label="扩展思考">
               <Switch
                 checked={meta.params.thinking}
-                onChange={(v) => void patch(() => chatApi.setParams({ thinking: v }))}
+                onChange={(v) => void patch(() => settingsApi.setParams({ thinking: v }))}
               />
             </Form.Item>
 
@@ -156,7 +175,7 @@ export default function SettingsModal({ panel, meta, onMeta, onClose }: Props) {
                   step={512}
                   value={meta.params.thinking_budget}
                   onChange={(v) =>
-                    void patch(() => chatApi.setParams({ thinking_budget: v ?? 8000 }))
+                    void patch(() => settingsApi.setParams({ thinking_budget: v ?? 8000 }))
                   }
                 />
               </Form.Item>

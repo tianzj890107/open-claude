@@ -203,22 +203,22 @@ This opens an interactive chat session. Type your message, press Enter, and the 
 open-claude -p "explain the main function in src/app.py"
 ```
 
-### Web UI (browser front-end)
+### Pure chat UI (browser front-end)
 
-A GPT/Claude-style chat UI that drives the **same** agent — streaming replies,
-live tool-call cards (Bash/Read/Write/Edit/Glob/Grep/Skill/Agent/MCP), model
-switching, and the active profile. It's a thin adapter (`oc_web_server.py` +
-`generic_claude_gpt_style_chat.html`) that imports the engine without modifying
-the `open_claude` package.
+A GPT/Claude-style chat over the **same** engine, with model switching and
+inference parameters. This surface is conversation only: the model is handed an
+empty tool list, so it cannot read or write files, run commands, call skills or
+spawn sub-agents (`OC_READONLY_FS` is set as a belt-and-braces guard). Use the
+CLI for anything that has to touch the project.
 
 ```bash
+cd web && npm install && npm run build && cd ..   # once (builds all three UIs)
 python oc_web_server.py            # serves http://127.0.0.1:47291/
 python oc_web_server.py --cwd path/to/project --profile researcher --port 47291
 ```
 
-The web session runs non-interactively (auto-approves tools, like
-`--dangerously-skip-permissions`), since there is no terminal to answer
-permission prompts; deny rules in settings/profiles are still honored.
+The UI is the React app (`web/src/plain/`), talking AG-UI to `/api/agui`; the
+original single-file page is still available at `/legacy`.
 
 ### Agent UI (React + CopilotKit)
 
