@@ -35,6 +35,9 @@ credentials.json
 # Web sandbox projects (created at runtime by oc_codex_server.py)
 sandbox/
 
+# Per-conversation hidden workspaces (created at runtime by oc_chat_server.py)
+chat_workspaces/
+
 # React frontend build artefacts (web/dist is covered by dist/ above)
 node_modules/
 .vite/

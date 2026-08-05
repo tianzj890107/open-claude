@@ -242,6 +242,31 @@ python oc_codex_server.py        # backend on 47313
 cd web && npm run dev            # UI on 5173, proxies /api and /p to the backend
 ```
 
+### Assistant UI (React + CopilotKit, for non-developers)
+
+A ChatGPT/Claude-style assistant. Same engine and same full tool set — it can
+run code, crunch a spreadsheet or draft a document to answer a question — but
+the sandbox is *hidden*: no file tree, no paths in the UI, and every string sent
+to the browser is scrubbed of workspace paths. Files the assistant produces are
+surfaced as **artifacts** (opaque ids, display name only) and open in a
+right-hand viewer that renders Markdown, HTML, images, PDF, CSV and code.
+
+```bash
+cd web && npm install && npm run build && cd ..   # once (builds both UIs)
+python oc_chat_server.py                           # http://127.0.0.1:47292/
+```
+
+Each conversation gets its own private workspace under `chat_workspaces/`,
+confined by `OC_SANDBOX_ROOT` exactly like the agent UI. Tools auto-approve
+here — a consumer app has nobody to answer permission prompts, and the sandbox
+rather than the prompt is what keeps it safe.
+
+| Surface | Program | Port | Tools | Sandbox |
+|---|---|---|---|---|
+| Pure chat | `oc_web_server.py` | 47291 | none (read-only) | n/a |
+| Assistant | `oc_chat_server.py` | 47292 | full | hidden, per conversation |
+| Agent workspace | `oc_codex_server.py` | 47313 | full | visible, per project |
+
 ### CLI Options
 
 ```

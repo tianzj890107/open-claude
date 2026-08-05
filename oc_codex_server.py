@@ -37,6 +37,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
 
+from oc_agui import AGUIStream, new_id
 from open_claude.repl import Conversation
 from open_claude.profile import AgentProfile
 from open_claude.api import stream_message
@@ -374,134 +375,6 @@ class Task:
         return stop_reason
 
 
-# ---------------------------------------------------------------------------
-# AG-UI protocol adapter
-#
-# The React frontend talks the AG-UI protocol (@ag-ui/client's HttpAgent), which
-# CopilotKit consumes directly — no Node runtime in the loop. This translates the
-# turn events open-claude already emits into AG-UI's event vocabulary.
-#
-# Wire rules verified against @ag-ui/client 0.0.57:
-#   - TOOL_CALL_START may reference a parentMessageId that no TEXT_MESSAGE_START
-#     ever opened; the client materialises the assistant message for it.
-#   - A message closed with TEXT_MESSAGE_END can still gain tool calls afterwards,
-#     so text and tool calls from one assistant turn land in one bubble.
-#   - REASONING_MESSAGE_START requires role="reasoning" (schema-validated).
-# ---------------------------------------------------------------------------
-
-# Tool output can be megabytes (a big Read, a chatty build); cap what crosses the
-# wire. The agent still sees the full result — this only trims the UI copy.
-_MAX_RESULT_CHARS = 20000
-
-
-def _new_id() -> str:
-    return uuid.uuid4().hex[:16]
-
-
-class AGUIStream:
-    """Turns open-claude turn events into AG-UI events on an SSE writer."""
-
-    def __init__(self, send):
-        self._send = send
-        self.msg_id: str | None = None      # assistant message currently building
-        self.text_open = False
-        self.reason_id: str | None = None
-        self.errored = False
-
-    def _ev(self, **kw):
-        self._send(kw)
-
-    # -- message framing -------------------------------------------------------
-
-    def _close_text(self):
-        if self.text_open:
-            self._ev(type="TEXT_MESSAGE_END", messageId=self.msg_id)
-            self.text_open = False
-
-    def _close_reasoning(self):
-        if self.reason_id:
-            self._ev(type="REASONING_MESSAGE_END", messageId=self.reason_id)
-            self.reason_id = None
-
-    def run_started(self, thread_id: str, run_id: str):
-        self._ev(type="RUN_STARTED", threadId=thread_id, runId=run_id)
-
-    def run_finished(self, thread_id: str, run_id: str):
-        if self.errored:      # RUN_ERROR already terminated the run
-            return
-        self._close_text()
-        self._close_reasoning()
-        self._ev(type="RUN_FINISHED", threadId=thread_id, runId=run_id)
-
-    def run_error(self, message: str):
-        if self.errored:
-            return
-        self._close_text()
-        self._close_reasoning()
-        self.errored = True
-        self._ev(type="RUN_ERROR", message=message)
-
-    # -- open-claude event -> AG-UI --------------------------------------------
-
-    def feed(self, ev: dict):
-        t = ev.get("type")
-
-        if t == "text":
-            self._close_reasoning()
-            if not self.text_open:
-                self.msg_id = self.msg_id or _new_id()
-                self._ev(type="TEXT_MESSAGE_START", messageId=self.msg_id,
-                         role="assistant")
-                self.text_open = True
-            self._ev(type="TEXT_MESSAGE_CONTENT", messageId=self.msg_id,
-                     delta=ev.get("text", ""))
-
-        elif t == "thinking":
-            # Reasoning is its own message kind; end the text bubble and start a
-            # fresh one afterwards so the two never interleave in a single id.
-            if self.text_open:
-                self._close_text()
-                self.msg_id = None
-            if not self.reason_id:
-                self.reason_id = _new_id()
-                self._ev(type="REASONING_MESSAGE_START",
-                         messageId=self.reason_id, role="reasoning")
-            self._ev(type="REASONING_MESSAGE_CONTENT",
-                     messageId=self.reason_id, delta=ev.get("text", ""))
-
-        elif t == "tool_use":
-            self._close_reasoning()
-            self._close_text()          # keep msg_id: tool calls join that bubble
-            self.msg_id = self.msg_id or _new_id()
-            self._ev(type="TOOL_CALL_START", toolCallId=ev.get("id", ""),
-                     toolCallName=ev.get("name", ""), parentMessageId=self.msg_id)
-            self._ev(type="TOOL_CALL_ARGS", toolCallId=ev.get("id", ""),
-                     delta=json.dumps(ev.get("input") or {}, ensure_ascii=False))
-            self._ev(type="TOOL_CALL_END", toolCallId=ev.get("id", ""))
-
-        elif t == "tool_result":
-            content = ev.get("content", "")
-            if len(content) > _MAX_RESULT_CHARS:
-                content = content[:_MAX_RESULT_CHARS] + "\n…(输出已截断)"
-            self._ev(type="TOOL_CALL_RESULT", messageId=_new_id(),
-                     toolCallId=ev.get("tool_use_id", ""), role="tool",
-                     content=content)
-            # Whatever the model says next belongs to a new assistant message.
-            self.msg_id = None
-            self.text_open = False
-
-        elif t in ("approval_request", "approval_result"):
-            # Out-of-band UI signal, not conversation content: the frontend pops
-            # a confirm dialog and answers via /api/tasks/<id>/approve.
-            self._ev(type="CUSTOM", name=t, value=ev)
-
-        elif t == "error":
-            self.run_error(str(ev.get("error", "")))
-
-        # "done" is emitted by stream_turn after the loop; RUN_FINISHED is sent
-        # by the request handler instead, so it carries thread/run ids.
-
-
 TASKS: dict[str, Task] = {}
 TASKS_LOCK = threading.Lock()
 
@@ -629,44 +502,43 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
+        # Drained up front: a body left unread on a keep-alive connection is
+        # parsed as the next request line and desynchronises the connection.
+        data = self._read_body()
         if path == "/api/projects":
-            data = self._read_body()
             ok, msg = create_project(data.get("name", ""))
             if ok:
                 self._send_json({"ok": True, "name": msg, "projects": list_projects()})
             else:
                 self._send_json({"error": msg}, status=400)
         elif path == "/api/tasks":
-            data = self._read_body()
             task = create_task(data.get("project", ""))
             if not task:
                 self._send_json({"error": "项目不存在或不在沙箱内"}, status=400)
                 return
             self._send_json(task.summary())
         elif path == "/api/model":
-            data = self._read_body()
             mid = data.get("model", "")
             if mid:
                 set_model(mid)
             self._send_json({"ok": True, "model": get_model()})
         elif path == "/api/params":
             try:
-                self._send_json(set_params(self._read_body()))
+                self._send_json(set_params(data))
             except (ValueError, TypeError) as e:
                 self._send_json({"error": str(e)}, status=400)
         elif path == "/api/upload":
-            self._handle_upload()
+            self._handle_upload(data)
         elif path == "/api/agui":
-            self._handle_agui(parse_qs(urlparse(self.path).query))
+            self._handle_agui(parse_qs(urlparse(self.path).query), data)
         else:
             m = re.match(r"^/api/tasks/([0-9a-f]+)/send$", path)
             if m:
-                self._handle_send(m.group(1))
+                self._handle_send(m.group(1), data)
                 return
             m = re.match(r"^/api/tasks/([0-9a-f]+)/approve$", path)
             if m:
                 task = TASKS.get(m.group(1))
-                data = self._read_body()
                 if not task:
                     self._send_json({"error": "任务不存在"}, status=404)
                 elif task.resolve_approval(str(data.get("id") or ""), bool(data.get("approved"))):
@@ -704,9 +576,8 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _handle_upload(self):
+    def _handle_upload(self, data: dict):
         """POST /api/upload {project, name, data(base64)} — save into project root."""
-        data = self._read_body()
         base = project_path(data.get("project", ""))
         name = os.path.basename(str(data.get("name") or "")).strip()
         if not base:
@@ -791,16 +662,15 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _handle_agui(self, qs: dict):
+    def _handle_agui(self, qs: dict, data: dict):
         """POST /api/agui?task=<id> — AG-UI run endpoint for the React client.
 
         Body is a RunAgentInput. We are the authority on conversation history
         (each Task owns a real open-claude Conversation), so of the messages the
         client replays we only take the newest user turn.
         """
-        data = self._read_body()
         thread_id = str(data.get("threadId") or "")
-        run_id = str(data.get("runId") or _new_id())
+        run_id = str(data.get("runId") or new_id())
         fwd = data.get("forwardedProps") or {}
         task_id = (qs.get("task") or [""])[0] or str(fwd.get("taskId") or "")
         task = TASKS.get(task_id)
@@ -844,9 +714,8 @@ class Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass    # client went away mid-turn; the turn state is already saved
 
-    def _handle_send(self, task_id: str):
+    def _handle_send(self, task_id: str, data: dict):
         task = TASKS.get(task_id)
-        data = self._read_body()
         text = (data.get("message") or "").strip()
 
         self.close_connection = True

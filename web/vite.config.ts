@@ -1,11 +1,15 @@
+import { resolve } from "node:path";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
+// Two apps share this project:
+//   index.html — developer agent workspace, served by oc_codex_server.py (47313)
+//   chat.html  — consumer assistant,       served by oc_chat_server.py  (47292)
+// `npm run dev` proxies to whichever backend OC_BACKEND points at; `npm run
+// build` emits both into web/dist, which each Python server serves itself, so
+// production needs no Node process at all.
 const BACKEND = process.env.OC_BACKEND ?? "http://127.0.0.1:47313";
 
-// `npm run dev` serves the app on 5173 and forwards every backend surface to a
-// running Python server; `npm run build` emits into web/dist, which the Python
-// server serves itself — so production needs no Node process at all.
 export default defineConfig({
   plugins: [react()],
   server: {
@@ -19,5 +23,11 @@ export default defineConfig({
     outDir: "dist",
     emptyOutDir: true,
     chunkSizeWarningLimit: 2000,
+    rollupOptions: {
+      input: {
+        index: resolve(__dirname, "index.html"),
+        chat: resolve(__dirname, "chat.html"),
+      },
+    },
   },
 });
