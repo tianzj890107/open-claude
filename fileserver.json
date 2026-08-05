@@ -1,0 +1,7 @@
+{
+  "_comment": "FileServer 上传配置(纳入 git,随代码下发到各机器)。minio_config() 读取优先级:环境变量 > 本文件 > ~/.claude/config.json > 内置默认。改这里即可让本地和服务器统一生效。上传目标必须走 eimos 公网网关(服务器可直连),不要用 172.16.5.190 内网地址(服务器 refused)。",
+  "minio_url": "http://pdt-dev.eimos.com/api/eimosp-ff-service",
+  "minio_bucket": "static",
+  "minio_access_key": "1Ffu7AJ1P9PNJwbD",
+  "minio_secret_key": "ARMr9xjwtzc+SKVOEhu0QcobicrHjdFm"
+}
